@@ -49,10 +49,19 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.activity.compose.BackHandler
+import androidx.compose.foundation.text.KeyboardActions
+import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material3.CircularProgressIndicator
+import androidx.compose.material3.OutlinedTextFieldDefaults
+import androidx.compose.ui.focus.FocusDirection
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalFocusManager
+import androidx.compose.ui.platform.LocalSoftwareKeyboardController
+import androidx.compose.ui.text.input.ImeAction
 import com.example.sensenav.data.LocationProvider
 import com.example.sensenav.data.MockSenseNavRepository
+import com.example.sensenav.data.PlaceGeocoder
 import com.example.sensenav.data.RouteRepository
 import com.example.sensenav.model.GeoPoint
 import com.example.sensenav.model.Refuge
@@ -114,7 +123,12 @@ private fun List<ScoredRoute>.rankedBySensory(): List<ScoredRoute> =
 
 private fun Refuge.toGeoPoint() = GeoPoint(latitude, longitude)
 
+private class PlaceNotFoundException(val query: String) : Exception()
+
 private fun Throwable.toUserMessage(): String = when (this) {
+    is PlaceNotFoundException ->
+        "Couldn't find \"$query\". Try a fuller address, or clear the box to " +
+            "route from your current location."
     is HttpException -> "The routing service returned an error (HTTP ${code()})."
     is IOException ->
         "Can't reach the routing service. Check your connection, or confirm the " +
@@ -146,6 +160,15 @@ fun SenseNavApp() {
     var destination by remember { mutableStateOf(repository.getRefuges().first()) }
     // Kept so the warning screen can draw the same routes without refetching.
     var loadedRoutes by remember { mutableStateOf<List<ScoredRoute>>(emptyList()) }
+
+    // Keeps the system back gesture consistent with the in-app back buttons.
+    BackHandler(enabled = screen != AppScreen.Splash && screen != AppScreen.Home) {
+        screen = when (screen) {
+            AppScreen.Routes -> AppScreen.NearbyMap
+            AppScreen.Warning -> AppScreen.Routes
+            else -> AppScreen.Home
+        }
+    }
 
     MaterialTheme {
         when (screen) {
@@ -180,7 +203,7 @@ fun SenseNavApp() {
             AppScreen.Routes -> RouteOptionsScreen(
                 destination = destination,
                 defaultOrigin = repository.defaultOrigin,
-                onBack = { screen = AppScreen.Search },
+                onBack = { screen = AppScreen.NearbyMap },
                 onWarning = { screen = AppScreen.Warning },
                 onNavigate = { screen = AppScreen.NearbyMap },
                 onRoutesLoaded = { loadedRoutes = it }
@@ -491,7 +514,8 @@ private fun SearchScreen(
             modifier = Modifier.fillMaxWidth(),
             placeholder = { Text("Search...") },
             singleLine = true,
-            shape = RoundedCornerShape(18.dp)
+            shape = RoundedCornerShape(18.dp),
+            colors = senseTextFieldColors()
         )
 
         Spacer(modifier = Modifier.height(26.dp))
@@ -532,6 +556,16 @@ private fun RouteOptionsScreen(
     val context = LocalContext.current
     val routeRepository = remember { RouteRepository() }
     val locationProvider = remember { LocationProvider(context) }
+    val placeGeocoder = remember { PlaceGeocoder(context) }
+    val keyboard = LocalSoftwareKeyboardController.current
+
+    // What the user is typing, and the values actually submitted for routing.
+    // A blank origin means "use my current location".
+    var originInput by remember { mutableStateOf("") }
+    var submittedOrigin by remember { mutableStateOf("") }
+    // Seeded from the refuge that was tapped, and reset if that changes.
+    var destinationInput by remember(destination.id) { mutableStateOf(destination.name) }
+    var submittedDestination by remember(destination.id) { mutableStateOf(destination.name) }
 
     var retryCount by remember { mutableStateOf(0) }
     var state by remember { mutableStateOf<RoutesUiState>(RoutesUiState.Loading) }
@@ -540,13 +574,29 @@ private fun RouteOptionsScreen(
         zoom = 14.2f
     )
 
-    LaunchedEffect(destination.id, retryCount) {
+    LaunchedEffect(destination.id, submittedOrigin, submittedDestination, retryCount) {
         state = RoutesUiState.Loading
         state = try {
-            // Real device position when we have it; the CBD fallback keeps the
-            // screen usable on an emulator or with location denied.
-            val origin = locationProvider.currentLocation() ?: defaultOrigin
-            val result = routeRepository.getRoutes(origin, destination.toGeoPoint())
+            val origin = if (submittedOrigin.isBlank()) {
+                // Real device position when we have it; the CBD fallback keeps
+                // the screen usable on an emulator or with location denied.
+                locationProvider.currentLocation() ?: defaultOrigin
+            } else {
+                placeGeocoder.resolve(submittedOrigin)
+                    ?: throw PlaceNotFoundException(submittedOrigin)
+            }
+
+            val destinationQuery = submittedDestination.ifBlank { destination.name }
+            val target = if (destinationQuery.equals(destination.name, ignoreCase = true)) {
+                // Unedited: use the refuge's own coordinates rather than
+                // round-tripping its name through the geocoder.
+                destination.toGeoPoint()
+            } else {
+                placeGeocoder.resolve(destinationQuery)
+                    ?: throw PlaceNotFoundException(destinationQuery)
+            }
+
+            val result = routeRepository.getRoutes(origin, target)
             onRoutesLoaded(result.routes)
             RoutesUiState.Loaded(origin, result)
         } catch (cancellation: CancellationException) {
@@ -554,6 +604,12 @@ private fun RouteOptionsScreen(
         } catch (error: Exception) {
             RoutesUiState.Error(error.toUserMessage())
         }
+    }
+
+    val submitPlaces = {
+        keyboard?.hide()
+        submittedOrigin = originInput.trim()
+        submittedDestination = destinationInput.trim()
     }
 
     val loaded = state as? RoutesUiState.Loaded
@@ -585,19 +641,19 @@ private fun RouteOptionsScreen(
                     route.toMapRoute(isDimmed = index != 0)
                 },
                 cameraPositionState = cameraPositionState,
-                contentPadding = PaddingValues(top = 90.dp)
+                contentPadding = PaddingValues(top = 250.dp)
             )
-            Row(
+            RoutePlannerCard(
+                originInput = originInput,
+                onOriginInputChange = { originInput = it },
+                destinationInput = destinationInput,
+                onDestinationInputChange = { destinationInput = it },
+                onSubmit = submitPlaces,
                 modifier = Modifier
                     .fillMaxWidth()
-                    .padding(horizontal = 16.dp, vertical = 34.dp)
-            ) {
-                SearchPill(
-                    text = "To ${destination.name}",
-                    modifier = Modifier.weight(1f),
-                    onClick = onBack
-                )
-            }
+                    .padding(horizontal = 16.dp)
+                    .padding(top = 34.dp)
+            )
         }
 
         Surface(
@@ -659,6 +715,118 @@ private fun RouteOptionsScreen(
         }
     }
 }
+
+/** Both ends are free text; a blank origin means "start from my location". */
+@Composable
+private fun RoutePlannerCard(
+    originInput: String,
+    onOriginInputChange: (String) -> Unit,
+    destinationInput: String,
+    onDestinationInputChange: (String) -> Unit,
+    onSubmit: () -> Unit,
+    modifier: Modifier = Modifier
+) {
+    Card(
+        modifier = modifier,
+        shape = RoundedCornerShape(18.dp),
+        colors = CardDefaults.cardColors(containerColor = Color.White),
+        elevation = CardDefaults.cardElevation(defaultElevation = 6.dp)
+    ) {
+        Column(modifier = Modifier.padding(12.dp)) {
+            PlaceField(
+                label = "From",
+                value = originInput,
+                onValueChange = onOriginInputChange,
+                placeholder = "My location",
+                imeAction = ImeAction.Next,
+                onSubmit = onSubmit
+            )
+
+            Spacer(modifier = Modifier.height(6.dp))
+
+            PlaceField(
+                label = "To",
+                value = destinationInput,
+                onValueChange = onDestinationInputChange,
+                placeholder = "Where to?",
+                imeAction = ImeAction.Search,
+                onSubmit = onSubmit
+            )
+
+            Spacer(modifier = Modifier.height(6.dp))
+            Button(
+                modifier = Modifier.fillMaxWidth(),
+                onClick = onSubmit,
+                colors = ButtonDefaults.buttonColors(containerColor = SenseBlue),
+                shape = RoundedCornerShape(12.dp)
+            ) {
+                Text(if (originInput.isBlank()) "Route from my location" else "Find routes")
+            }
+        }
+    }
+}
+
+@Composable
+private fun PlaceField(
+    label: String,
+    value: String,
+    onValueChange: (String) -> Unit,
+    placeholder: String,
+    imeAction: ImeAction,
+    onSubmit: () -> Unit
+) {
+    val focusManager = LocalFocusManager.current
+
+    Row(verticalAlignment = Alignment.CenterVertically) {
+        Text(
+            text = label,
+            modifier = Modifier.width(46.dp),
+            color = SenseMuted,
+            fontSize = 12.sp,
+            fontWeight = FontWeight.Bold
+        )
+        OutlinedTextField(
+            value = value,
+            onValueChange = onValueChange,
+            modifier = Modifier.weight(1f),
+            placeholder = { Text(placeholder, fontSize = 14.sp) },
+            singleLine = true,
+            shape = RoundedCornerShape(12.dp),
+            colors = senseTextFieldColors(),
+            keyboardOptions = KeyboardOptions(imeAction = imeAction),
+            keyboardActions = KeyboardActions(
+                // "Next" moves From -> To; only "Search" fires the request.
+                onNext = { focusManager.moveFocus(FocusDirection.Down) },
+                onSearch = { onSubmit() }
+            ),
+            trailingIcon = {
+                if (value.isNotBlank()) {
+                    TextButton(onClick = { onValueChange("") }) {
+                        Text("Clear", color = SenseMuted, fontSize = 11.sp)
+                    }
+                }
+            }
+        )
+    }
+}
+
+/**
+ * Pinned explicitly rather than inherited, so these fields stay legible even if
+ * the colour scheme changes again.
+ */
+@Composable
+private fun senseTextFieldColors() = OutlinedTextFieldDefaults.colors(
+    focusedTextColor = SenseInk,
+    unfocusedTextColor = SenseInk,
+    disabledTextColor = SenseMuted,
+    focusedContainerColor = Color.White,
+    unfocusedContainerColor = Color.White,
+    cursorColor = SenseBlue,
+    focusedBorderColor = SenseBlue,
+    unfocusedBorderColor = Color(0xFFD8DEE9),
+    focusedPlaceholderColor = SenseMuted,
+    unfocusedPlaceholderColor = SenseMuted
+)
 
 @Composable
 private fun RoutesLoading() {
