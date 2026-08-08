@@ -18,6 +18,8 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.CircleShape
@@ -56,10 +58,13 @@ import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.OutlinedTextFieldDefaults
 import androidx.compose.ui.focus.FocusDirection
+import androidx.compose.ui.focus.FocusRequester
+import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalFocusManager
 import androidx.compose.ui.platform.LocalSoftwareKeyboardController
 import androidx.compose.ui.text.input.ImeAction
+import com.example.sensenav.data.HistoryStore
 import com.example.sensenav.data.LocationProvider
 import com.example.sensenav.data.MockSenseNavRepository
 import com.example.sensenav.data.PlaceGeocoder
@@ -168,6 +173,13 @@ fun SenseNavApp() {
     val refugeRepository = remember { RefugeRepository() }
     val searchRepository = remember { SearchRepository() }
 
+    // History is device-local, so it is read straight from disk at start-up
+    // rather than fetched, and mirrored here so the screens recompose on change.
+    val context = LocalContext.current
+    val historyStore = remember(context) { HistoryStore(context) }
+    var recentSearches by remember { mutableStateOf(historyStore.recentSearches()) }
+    var recentlyViewed by remember { mutableStateOf(historyStore.recentlyViewed()) }
+
     var refuges by remember { mutableStateOf<List<Refuge>>(emptyList()) }
     var warnings by remember { mutableStateOf<List<WarningInfo>>(emptyList()) }
 
@@ -196,6 +208,20 @@ fun SenseNavApp() {
     }
     // Kept so the warning screen can draw the same routes without refetching.
     var loadedRoutes by remember { mutableStateOf<List<ScoredRoute>>(emptyList()) }
+    // Endpoints typed on the search screen. A blank start means "my current
+    // location"; a blank end falls back to the selected refuge's own name.
+    var startPoint by remember { mutableStateOf("") }
+    var endPoint by remember { mutableStateOf("") }
+
+    // Opening a refuge is what counts as "viewed" - marker taps on the map are
+    // browsing, not a visit, so they are not recorded.
+    val openRefuge: (Refuge) -> Unit = { refuge ->
+        destination = refuge
+        // Clears any typed destination, so routing uses the refuge's own
+        // coordinates instead of geocoding a stale search term.
+        endPoint = refuge.name
+        recentlyViewed = historyStore.recordViewed(refuge)
+    }
 
     // Keeps the system back gesture consistent with the in-app back buttons.
     BackHandler(enabled = screen != AppScreen.Splash && screen != AppScreen.Home) {
@@ -213,6 +239,10 @@ fun SenseNavApp() {
                 refuges = refuges,
                 onSearch = { screen = AppScreen.Search },
                 onNearbyMap = { screen = AppScreen.NearbyMap },
+                onOpenRefuge = { refuge ->
+                    openRefuge(refuge)
+                    screen = AppScreen.NearbyMap
+                },
                 onWarning = { screen = AppScreen.Warning }
             )
             AppScreen.NearbyMap -> NearbyMapScreen(
@@ -221,7 +251,7 @@ fun SenseNavApp() {
                 onBack = { screen = AppScreen.Home },
                 onSearch = { screen = AppScreen.Search },
                 onNavigate = { refuge ->
-                    destination = refuge
+                    openRefuge(refuge)
                     screen = AppScreen.Routes
                 },
                 onWarning = { screen = AppScreen.Warning }
@@ -230,10 +260,22 @@ fun SenseNavApp() {
                 repository = repository,
                 refuges = refuges,
                 searchRepository = searchRepository,
+                origin = startPoint,
+                onOriginChange = { startPoint = it },
+                recentSearches = recentSearches,
+                recentlyViewed = recentlyViewed,
+                onSearchRecorded = { result ->
+                    recentSearches = historyStore.recordSearch(result)
+                },
+                onClearSearches = { recentSearches = historyStore.clearSearches() },
+                onClearViewed = { recentlyViewed = historyStore.clearViewed() },
                 onBack = { screen = AppScreen.Home },
-                onRouteSelected = { screen = AppScreen.Routes },
+                onRoute = { typedDestination ->
+                    endPoint = typedDestination
+                    screen = AppScreen.Routes
+                },
                 onRefugeSelected = { refuge ->
-                    destination = refuge
+                    openRefuge(refuge)
                     screen = AppScreen.NearbyMap
                 },
                 onWarning = { screen = AppScreen.Warning }
@@ -241,6 +283,8 @@ fun SenseNavApp() {
             AppScreen.Routes -> RouteOptionsScreen(
                 destination = destination,
                 defaultOrigin = repository.defaultOrigin,
+                initialOrigin = startPoint,
+                initialDestination = endPoint.ifBlank { destination.name },
                 onBack = { screen = AppScreen.NearbyMap },
                 onWarning = { screen = AppScreen.Warning },
                 onNavigate = { screen = AppScreen.NearbyMap },
@@ -321,6 +365,7 @@ private fun HomeScreen(
     refuges: List<Refuge>,
     onSearch: () -> Unit,
     onNearbyMap: () -> Unit,
+    onOpenRefuge: (Refuge) -> Unit,
     onWarning: () -> Unit
 ) {
 
@@ -397,7 +442,7 @@ private fun HomeScreen(
             item {
                 LazyRow(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
                     items(refuges.take(3)) { refuge ->
-                        RefugePhotoCard(refuge = refuge, onClick = onNearbyMap)
+                        RefugePhotoCard(refuge = refuge, onClick = { onOpenRefuge(refuge) })
                     }
                 }
             }
@@ -413,7 +458,7 @@ private fun HomeScreen(
             }
 
             items(refuges.drop(2)) { refuge ->
-                RefugeListItem(refuge = refuge, onClick = onNearbyMap)
+                RefugeListItem(refuge = refuge, onClick = { onOpenRefuge(refuge) })
             }
         }
     }
@@ -521,22 +566,48 @@ private fun SearchScreen(
     repository: MockSenseNavRepository,
     refuges: List<Refuge>,
     searchRepository: SearchRepository,
+    origin: String,
+    onOriginChange: (String) -> Unit,
+    recentSearches: List<SearchResult>,
+    recentlyViewed: List<Refuge>,
+    onSearchRecorded: (SearchResult) -> Unit,
+    onClearSearches: () -> Unit,
+    onClearViewed: () -> Unit,
     onBack: () -> Unit,
-    onRouteSelected: () -> Unit,
+    onRoute: (String) -> Unit,
     onRefugeSelected: (Refuge) -> Unit,
     onWarning: () -> Unit
 ) {
+    // The destination field doubles as the search box. What is typed and what
+    // has been searched for are separate: the query is only sent on enter.
     var query by remember { mutableStateOf("") }
+    var submittedQuery by remember { mutableStateOf("") }
+    var searching by remember { mutableStateOf(false) }
     var backendSearchResults by remember {
         mutableStateOf<List<SearchResult>>(emptyList())
     }
+    val keyboard = LocalSoftwareKeyboardController.current
+    val destinationFocus = remember { FocusRequester() }
 
+    // Land the user in the destination field so they can type straight away.
+    LaunchedEffect(Unit) {
+        destinationFocus.requestFocus()
+    }
+
+    // Emptying the box drops back to the history rather than stranding the
+    // results of a search the user has visibly deleted.
     LaunchedEffect(query) {
-        if (query.isBlank()) {
+        if (query.isBlank()) submittedQuery = ""
+    }
+
+    LaunchedEffect(submittedQuery) {
+        if (submittedQuery.isBlank()) {
             backendSearchResults = emptyList()
+            searching = false
         } else {
+            searching = true
             backendSearchResults = try {
-                searchRepository.search(query).map {
+                searchRepository.search(submittedQuery).map {
                     SearchResult(
                         id = it.id.toString(),
                         title = it.name,
@@ -548,19 +619,19 @@ private fun SearchScreen(
             } catch (e: Exception) {
                 emptyList()
             }
+            searching = false
         }
     }
 
-    val shown = if (query.isBlank()) {
-        repository.getRecentSearches()
-    } else {
-        backendSearchResults
-    }
+    val showingHistory = submittedQuery.isBlank()
+    val shown = if (showingHistory) recentSearches else backendSearchResults
 
     Column(
         modifier = Modifier
             .fillMaxSize()
             .background(Color.White)
+            // Both history lists hold up to ten entries, so the page has to scroll.
+            .verticalScroll(rememberScrollState())
             .padding(horizontal = 20.dp, vertical = 28.dp)
     ) {
         Row(verticalAlignment = Alignment.CenterVertically) {
@@ -576,39 +647,77 @@ private fun SearchScreen(
         }
 
         Spacer(modifier = Modifier.height(18.dp))
-        OutlinedTextField(
-            value = query,
-            onValueChange = { query = it },
+        // The start is left blank on purpose: empty means "my current location",
+        // which is what the routing screen falls back to.
+        RoutePlannerCard(
+            originInput = origin,
+            onOriginInputChange = onOriginChange,
+            destinationInput = query,
+            onDestinationInputChange = { query = it },
+            onSubmit = {
+                submittedQuery = query.trim()
+                keyboard?.hide()
+            },
             modifier = Modifier.fillMaxWidth(),
-            placeholder = { Text("Search...") },
-            singleLine = true,
-            shape = RoundedCornerShape(18.dp),
-            colors = senseTextFieldColors()
+            destinationFocusRequester = destinationFocus,
+            onRoute = {
+                keyboard?.hide()
+                val typed = query.trim()
+                onSearchRecorded(
+                    SearchResult(
+                        id = "typed_${typed.lowercase()}",
+                        title = typed,
+                        subtitle = "Searched destination",
+                        type = SearchResultType.Route,
+                        sensoryLabel = ""
+                    )
+                )
+                onRoute(typed)
+            }
         )
 
         Spacer(modifier = Modifier.height(26.dp))
-        SectionHeader(if (query.isBlank()) "Recent Searches" else "Search Results", "Clear All", null)
+        SectionHeader(
+            title = if (showingHistory) "Recent Searches" else "Search Results",
+            action = "Clear All".takeIf { showingHistory && recentSearches.isNotEmpty() },
+            onAction = onClearSearches
+        )
 
         Spacer(modifier = Modifier.height(6.dp))
+        when {
+            searching -> HistoryEmptyHint("Searching...")
+            showingHistory && shown.isEmpty() ->
+                HistoryEmptyHint("Places you search for will be listed here.")
+            !showingHistory && shown.isEmpty() ->
+                HistoryEmptyHint("No matches for \"$submittedQuery\".")
+        }
         shown.forEach { result ->
             SearchResultRow(
                 result = result,
                 onClick = {
+                    onSearchRecorded(result)
                     val refuge = refuges.firstOrNull {
                         it.name.equals(result.title, ignoreCase = true)
                     } ?: repository.getRefugeDetail(result.id)
                     when {
                         refuge != null -> onRefugeSelected(refuge)
                         result.type == SearchResultType.Route ||
-                            result.type == SearchResultType.Station -> onRouteSelected()
+                            result.type == SearchResultType.Station -> onRoute(result.title)
                     }
                 }
             )
         }
 
         Spacer(modifier = Modifier.height(18.dp))
-        SectionHeader("Recently Viewed", "See All", null)
-        refuges.take(3).forEach { refuge ->
+        SectionHeader(
+            title = "Recently Viewed",
+            action = "Clear All".takeIf { recentlyViewed.isNotEmpty() },
+            onAction = onClearViewed
+        )
+        if (recentlyViewed.isEmpty()) {
+            HistoryEmptyHint("Refuges you open will be listed here.")
+        }
+        recentlyViewed.forEach { refuge ->
             RefugeListItem(refuge = refuge, onClick = { onRefugeSelected(refuge) })
         }
     }
@@ -618,6 +727,8 @@ private fun SearchScreen(
 private fun RouteOptionsScreen(
     destination: Refuge,
     defaultOrigin: GeoPoint,
+    initialOrigin: String,
+    initialDestination: String,
     onBack: () -> Unit,
     onWarning: () -> Unit,
     onNavigate: () -> Unit,
@@ -631,11 +742,14 @@ private fun RouteOptionsScreen(
 
     // What the user is typing, and the values actually submitted for routing.
     // A blank origin means "use my current location".
-    var originInput by remember { mutableStateOf("") }
-    var submittedOrigin by remember { mutableStateOf("") }
-    // Seeded from the refuge that was tapped, and reset if that changes.
-    var destinationInput by remember(destination.id) { mutableStateOf(destination.name) }
-    var submittedDestination by remember(destination.id) { mutableStateOf(destination.name) }
+    var originInput by remember(initialOrigin) { mutableStateOf(initialOrigin) }
+    var submittedOrigin by remember(initialOrigin) { mutableStateOf(initialOrigin) }
+    // Seeded from the refuge that was tapped, or from what was typed on the
+    // search screen, and reset if either changes.
+    var destinationInput by remember(initialDestination) { mutableStateOf(initialDestination) }
+    var submittedDestination by remember(initialDestination) {
+        mutableStateOf(initialDestination)
+    }
 
     var retryCount by remember { mutableStateOf(0) }
     var state by remember { mutableStateOf<RoutesUiState>(RoutesUiState.Loading) }
@@ -798,7 +912,13 @@ private fun RouteOptionsScreen(
     }
 }
 
-/** Both ends are free text; a blank origin means "start from my location". */
+/**
+ * Both ends are free text; a blank origin means "start from my location".
+ *
+ * [onSubmit] fires on the keyboard's enter/search key, [onRoute] on the button.
+ * The routing screen points both at the same handler; the search screen keeps
+ * them apart, so enter runs a search and the button opens the route options.
+ */
 @Composable
 private fun RoutePlannerCard(
     originInput: String,
@@ -806,7 +926,9 @@ private fun RoutePlannerCard(
     destinationInput: String,
     onDestinationInputChange: (String) -> Unit,
     onSubmit: () -> Unit,
-    modifier: Modifier = Modifier
+    modifier: Modifier = Modifier,
+    destinationFocusRequester: FocusRequester? = null,
+    onRoute: () -> Unit = onSubmit
 ) {
     Card(
         modifier = modifier,
@@ -819,7 +941,7 @@ private fun RoutePlannerCard(
                 marker = { OriginDot() },
                 value = originInput,
                 onValueChange = onOriginInputChange,
-                placeholder = "My location",
+                placeholder = "Your location",
                 imeAction = ImeAction.Next,
                 onSubmit = onSubmit
             )
@@ -832,13 +954,17 @@ private fun RoutePlannerCard(
                 onValueChange = onDestinationInputChange,
                 placeholder = "Where to?",
                 imeAction = ImeAction.Search,
-                onSubmit = onSubmit
+                onSubmit = onSubmit,
+                modifier = destinationFocusRequester
+                    ?.let { Modifier.focusRequester(it) }
+                    ?: Modifier
             )
 
             Spacer(modifier = Modifier.height(10.dp))
             Button(
                 modifier = Modifier.fillMaxWidth(),
-                onClick = onSubmit,
+                onClick = onRoute,
+                enabled = destinationInput.isNotBlank(),
                 colors = ButtonDefaults.buttonColors(containerColor = SenseBlue),
                 shape = RoundedCornerShape(12.dp)
             ) {
@@ -905,7 +1031,8 @@ private fun PlaceField(
     onValueChange: (String) -> Unit,
     placeholder: String,
     imeAction: ImeAction,
-    onSubmit: () -> Unit
+    onSubmit: () -> Unit,
+    modifier: Modifier = Modifier
 ) {
     val focusManager = LocalFocusManager.current
 
@@ -920,7 +1047,7 @@ private fun PlaceField(
         OutlinedTextField(
             value = value,
             onValueChange = onValueChange,
-            modifier = Modifier.weight(1f),
+            modifier = Modifier.weight(1f).then(modifier),
             placeholder = { Text(placeholder, fontSize = 14.sp) },
             singleLine = true,
             shape = RoundedCornerShape(12.dp),
@@ -1060,6 +1187,17 @@ private fun WarningScreen(
             }
         }
     }
+}
+
+/** Stands in for a history list that has nothing in it yet. */
+@Composable
+private fun HistoryEmptyHint(text: String) {
+    Text(
+        text = text,
+        modifier = Modifier.padding(vertical = 10.dp),
+        color = SenseMuted,
+        fontSize = 13.sp
+    )
 }
 
 @Composable

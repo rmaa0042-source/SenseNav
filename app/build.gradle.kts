@@ -101,6 +101,8 @@ dependencies {
     implementation(libs.androidx.compose.material3)
     implementation(libs.retrofit)
     implementation(libs.retrofit.converter.gson)
+    // Used directly by HistoryStore, so declared rather than left transitive.
+    implementation(libs.gson)
     implementation(libs.maps.compose)
     implementation(libs.play.services.maps)
     implementation(libs.play.services.location)
