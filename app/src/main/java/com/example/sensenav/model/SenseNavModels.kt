@@ -22,17 +22,45 @@ data class Refuge(
     val isSaved: Boolean = false
 )
 
-data class RouteOption(
-    val id: String,
-    val title: String,
-    val sensoryRisk: String,
-    val rating: Double,
-    val reviewCount: Int,
-    val durationMinutes: Int,
-    val roadName: String,
-    val isRecommended: Boolean,
-    val sensoryScore: Int,
-    val path: List<GeoPoint> = emptyList()
+/** Sensory load of a route, as classified by the scoring API. */
+enum class Sensitivity(val rank: Int) {
+    Low(0),
+    Medium(1),
+    High(2),
+    Unknown(3);
+
+    companion object {
+        fun from(raw: String?): Sensitivity = when (raw?.lowercase()) {
+            "low" -> Low
+            "medium" -> Medium
+            "high" -> High
+            else -> Unknown
+        }
+    }
+}
+
+/** One walking route returned by the scoring API, with its polyline decoded. */
+data class ScoredRoute(
+    val summary: String,
+    val path: List<GeoPoint>,
+    val distanceText: String,
+    val durationText: String,
+    val sensitivity: Sensitivity,
+    val colorHex: String?,
+    val avgPedestrianCount: Double?
+) {
+    /** True when this route carries a real sensor-backed sensory rating. */
+    val isScored: Boolean get() = sensitivity != Sensitivity.Unknown
+}
+
+/**
+ * Result of a route query. When [isScored] is false the API found no sensor
+ * coverage for the trip, so the single route returned must be shown as a plain
+ * route with no sensory claim.
+ */
+data class RouteResult(
+    val isScored: Boolean,
+    val routes: List<ScoredRoute>
 )
 
 data class WarningInfo(

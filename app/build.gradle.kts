@@ -5,13 +5,23 @@ plugins {
     alias(libs.plugins.kotlin.compose)
 }
 
+val localProperties = Properties().apply {
+    val file = rootProject.file("local.properties")
+    if (file.exists()) file.inputStream().use { load(it) }
+}
+
 // The Maps key lives in local.properties, which is gitignored, so it never
 // reaches version control. Absent key -> empty string; the map screen detects
 // that and shows setup instructions instead of a blank grey tile.
-val mapsApiKey: String = Properties().apply {
-    val file = rootProject.file("local.properties")
-    if (file.exists()) file.inputStream().use { load(it) }
-}.getProperty("MAPS_API_KEY").orEmpty()
+val mapsApiKey: String = localProperties.getProperty("MAPS_API_KEY").orEmpty().trim()
+
+// The routing API runs on a VM without a static IP, so the address can change.
+// Override it in local.properties rather than editing source.
+val routingApiBaseUrl: String = localProperties
+    .getProperty("ROUTING_API_BASE_URL")
+    .orEmpty()
+    .trim()
+    .ifEmpty { "http://34.172.95.142:8000/" }
 
 android {
     namespace = "com.example.sensenav"
@@ -32,6 +42,7 @@ android {
 
         manifestPlaceholders["MAPS_API_KEY"] = mapsApiKey
         buildConfigField("String", "MAPS_API_KEY", "\"$mapsApiKey\"")
+        buildConfigField("String", "ROUTING_API_BASE_URL", "\"$routingApiBaseUrl\"")
     }
 
     buildTypes {
@@ -67,6 +78,8 @@ dependencies {
     implementation(libs.maps.compose)
     implementation(libs.play.services.maps)
     implementation(libs.play.services.location)
+    implementation(libs.android.maps.utils)
+    implementation(libs.kotlinx.coroutines.play.services)
     testImplementation(libs.junit)
     androidTestImplementation(libs.androidx.junit)
     androidTestImplementation(libs.androidx.espresso.core)

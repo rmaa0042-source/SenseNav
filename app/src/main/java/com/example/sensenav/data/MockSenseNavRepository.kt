@@ -2,16 +2,20 @@ package com.example.sensenav.data
 
 import com.example.sensenav.model.GeoPoint
 import com.example.sensenav.model.Refuge
-import com.example.sensenav.model.RouteOption
 import com.example.sensenav.model.SearchResult
 import com.example.sensenav.model.SearchResultType
 import com.example.sensenav.model.WarningInfo
 
+/**
+ * Local catalogue of sensory refuges and warnings.
+ *
+ * Routes are NOT served from here - they come from the live scoring API via
+ * [RouteRepository]. This holds only the data that has no endpoint yet.
+ */
 class MockSenseNavRepository {
-    // Flinders Street Station -> State Library Victoria, the pair the route and
-    // warning screens demo. Replaced by decoded API polylines once /route is wired up.
-    private val flindersStreetStation = GeoPoint(-37.8183, 144.9671)
-    private val stateLibrary = GeoPoint(-37.8098, 144.9652)
+
+    /** Fallback origin when the device location is unavailable. */
+    val defaultOrigin = GeoPoint(-37.8183, 144.9671) // Flinders Street Station
 
     private val refuges = listOf(
         Refuge(
@@ -62,49 +66,6 @@ class MockSenseNavRepository {
         )
     )
 
-    private val routes = listOf(
-        RouteOption(
-            id = "route_direct",
-            title = "Direct Route",
-            sensoryRisk = "High Sensory Risk",
-            rating = 4.0,
-            reviewCount = 156,
-            durationMinutes = 5,
-            roadName = "Highway Road",
-            isRecommended = false,
-            sensoryScore = 42,
-            // Straight up Swanston St - shortest, but past Bourke St Mall.
-            path = listOf(
-                flindersStreetStation,
-                GeoPoint(-37.8175, 144.9666),
-                GeoPoint(-37.8152, 144.9657),
-                GeoPoint(-37.8130, 144.9650),
-                GeoPoint(-37.8110, 144.9648),
-                stateLibrary
-            )
-        ),
-        RouteOption(
-            id = "route_low_sensory",
-            title = "Low Sensory Route",
-            sensoryRisk = "Recommended",
-            rating = 4.5,
-            reviewCount = 240,
-            durationMinutes = 5,
-            roadName = "Downtown Road",
-            isRecommended = true,
-            sensoryScore = 86,
-            // Swings east via the quieter Russell St side streets.
-            path = listOf(
-                flindersStreetStation,
-                GeoPoint(-37.8176, 144.9690),
-                GeoPoint(-37.8150, 144.9700),
-                GeoPoint(-37.8125, 144.9685),
-                GeoPoint(-37.8105, 144.9668),
-                stateLibrary
-            )
-        )
-    )
-
     private val warnings = listOf(
         WarningInfo(
             id = "warning_bourke_st_mall",
@@ -146,10 +107,6 @@ class MockSenseNavRepository {
 
     fun getRefugeDetail(id: String): Refuge? = refuges.firstOrNull { it.id == id }
 
-    fun getRoutes(): List<RouteOption> = routes
-
-    fun getRouteDetail(id: String): RouteOption? = routes.firstOrNull { it.id == id }
-
     fun getWarnings(): List<WarningInfo> = warnings
 
     fun getWarningDetail(id: String): WarningInfo? = warnings.firstOrNull { it.id == id }
@@ -170,17 +127,7 @@ class MockSenseNavRepository {
             )
         }
 
-        val routeResults = routes.map {
-            SearchResult(
-                id = it.id,
-                title = it.title,
-                subtitle = "${it.durationMinutes} min via ${it.roadName}",
-                type = SearchResultType.Route,
-                sensoryLabel = it.sensoryRisk
-            )
-        }
-
-        return (recentSearches + refugeResults + routeResults)
+        return (recentSearches + refugeResults)
             .distinctBy { it.id }
             .filter {
                 it.title.lowercase().contains(normalized) ||

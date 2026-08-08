@@ -1,57 +1,78 @@
 package com.example.sensenav.api
 
-import com.example.sensenav.model.Refuge
-import com.example.sensenav.model.RouteOption
-import com.example.sensenav.model.SearchResult
-import com.example.sensenav.model.WarningInfo
+import com.example.sensenav.BuildConfig
+import com.google.gson.annotations.SerializedName
+import okhttp3.OkHttpClient
+import retrofit2.Retrofit
+import retrofit2.converter.gson.GsonConverterFactory
+import retrofit2.http.Body
 import retrofit2.http.GET
-import retrofit2.http.Path
-import retrofit2.http.Query
+import retrofit2.http.POST
+import java.util.concurrent.TimeUnit
 
-object SenseNavEndpoints {
-    const val REFUGES = "/api/refuges"
-    const val REFUGE_DETAIL = "/api/refuges/{id}"
-    const val SEARCH = "/api/search"
-    const val ROUTES = "/api/routes"
-    const val ROUTE_DETAIL = "/api/routes/{id}"
-    const val WARNINGS = "/api/warnings"
-    const val WARNING_DETAIL = "/api/warnings/{id}"
-}
+data class LatLngDto(
+    val lat: Double,
+    val lng: Double
+)
+
+data class RouteRequestDto(
+    val origin: LatLngDto,
+    val destination: LatLngDto
+)
+
+/**
+ * `mode` is either "scored" (at least one route has live sensor data) or
+ * "unscored" (no sensor coverage for this trip - a single route comes back with
+ * null sensitivity and colour, and must not be presented as sensory-rated).
+ */
+data class ScoredRoutesResponseDto(
+    val mode: String? = null,
+    val routes: List<ScoredRouteDto> = emptyList()
+)
+
+data class ScoredRouteDto(
+    val summary: String? = null,
+    val polyline: String? = null,
+    @SerializedName("distance_text") val distanceText: String? = null,
+    @SerializedName("duration_text") val durationText: String? = null,
+    val sensitivity: String? = null,
+    val color: String? = null,
+    @SerializedName("avg_pedestrian_count") val avgPedestrianCount: Double? = null
+)
+
+data class HealthDto(
+    val status: String? = null
+)
 
 interface SenseNavApi {
-    // Homepage and Nearby Map: GET /api/refuges
-    @GET(SenseNavEndpoints.REFUGES)
-    suspend fun getRefuges(): List<Refuge>
 
-    // Refuge Detail: GET /api/refuges/{id}
-    @GET(SenseNavEndpoints.REFUGE_DETAIL)
-    suspend fun getRefugeDetail(
-        @Path("id") id: String
-    ): Refuge
+    /** Health check - confirms the VM is up and the address is still valid. */
+    @GET("/")
+    suspend fun health(): HealthDto
 
-    // Search: GET /api/search?keyword=library
-    @GET(SenseNavEndpoints.SEARCH)
-    suspend fun search(
-        @Query("keyword") keyword: String
-    ): List<SearchResult>
+    /**
+     * Returns 2-3 walking routes between two points, each scored against City of
+     * Melbourne pedestrian sensor data and returned as an encoded polyline.
+     */
+    @POST("/route")
+    suspend fun getScoredRoutes(@Body request: RouteRequestDto): ScoredRoutesResponseDto
+}
 
-    // Route Options: GET /api/routes
-    @GET(SenseNavEndpoints.ROUTES)
-    suspend fun getRoutes(): List<RouteOption>
+object SenseNavApiClient {
 
-    // Route Detail: GET /api/routes/{id}
-    @GET(SenseNavEndpoints.ROUTE_DETAIL)
-    suspend fun getRouteDetail(
-        @Path("id") id: String
-    ): RouteOption
+    val api: SenseNavApi by lazy {
+        val client = OkHttpClient.Builder()
+            .connectTimeout(15, TimeUnit.SECONDS)
+            // Route scoring queries Google Directions then the sensor dataset,
+            // so responses are slower than a plain CRUD call.
+            .readTimeout(45, TimeUnit.SECONDS)
+            .build()
 
-    // Warning: GET /api/warnings
-    @GET(SenseNavEndpoints.WARNINGS)
-    suspend fun getWarnings(): List<WarningInfo>
-
-    // Warning Detail: GET /api/warnings/{id}
-    @GET(SenseNavEndpoints.WARNING_DETAIL)
-    suspend fun getWarningDetail(
-        @Path("id") id: String
-    ): WarningInfo
+        Retrofit.Builder()
+            .baseUrl(BuildConfig.ROUTING_API_BASE_URL)
+            .client(client)
+            .addConverterFactory(GsonConverterFactory.create())
+            .build()
+            .create(SenseNavApi::class.java)
+    }
 }

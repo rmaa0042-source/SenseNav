@@ -49,18 +49,31 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.compose.material3.CircularProgressIndicator
+import androidx.compose.ui.platform.LocalContext
+import com.example.sensenav.data.LocationProvider
 import com.example.sensenav.data.MockSenseNavRepository
+import com.example.sensenav.data.RouteRepository
+import com.example.sensenav.model.GeoPoint
 import com.example.sensenav.model.Refuge
-import com.example.sensenav.model.RouteOption
+import com.example.sensenav.model.RouteResult
+import com.example.sensenav.model.ScoredRoute
 import com.example.sensenav.model.SearchResult
 import com.example.sensenav.model.SearchResultType
+import com.example.sensenav.model.Sensitivity
 import com.example.sensenav.ui.map.MapRoute
 import com.example.sensenav.ui.map.SenseNavMap
 import com.example.sensenav.ui.map.rememberSenseNavCameraState
 import com.example.sensenav.ui.map.toLatLng
 import com.google.android.gms.maps.CameraUpdateFactory
 import com.google.android.gms.maps.model.LatLng
+import com.google.android.gms.maps.model.LatLngBounds
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.delay
+import retrofit2.HttpException
+import java.io.IOException
+import kotlin.math.roundToInt
+import android.graphics.Color as AndroidColor
 
 private val SenseBlue = Color(0xFF2F5FBD)
 private val SenseSoftBlue = Color(0xFFEAF2FF)
@@ -70,23 +83,50 @@ private val SensePink = Color(0xFFFF4F86)
 private val SenseGreen = Color(0xFF1B9F5A)
 private val ScreenBg = Color(0xFFF7F9FD)
 
-// Route stroke colours, matching the scoring API's sensitivity palette.
+// Fallbacks only - the API supplies a colour per route and it takes precedence.
 private val SenseRiskLow = Color(0xFF3B8BD4)
 private val SenseRiskMedium = Color(0xFFEF9F27)
 private val SenseRiskHigh = Color(0xFFE24B4A)
 
-/** Roughly halfway along the Flinders St -> State Library demo trip. */
-private val RouteMidpoint = LatLng(-37.8140, 144.9668)
+private fun ScoredRoute.displayColor(): Color =
+    colorHex?.let { hex -> runCatching { Color(AndroidColor.parseColor(hex)) }.getOrNull() }
+        ?: when (sensitivity) {
+            Sensitivity.Low -> SenseRiskLow
+            Sensitivity.Medium -> SenseRiskMedium
+            Sensitivity.High -> SenseRiskHigh
+            Sensitivity.Unknown -> SenseMuted
+        }
 
-private fun RouteOption.toMapRoute(isDimmed: Boolean = false) = MapRoute(
+private fun ScoredRoute.toMapRoute(isDimmed: Boolean = false) = MapRoute(
     points = path.map { it.toLatLng() },
-    color = when {
-        sensoryScore >= 70 -> SenseRiskLow
-        sensoryScore >= 45 -> SenseRiskMedium
-        else -> SenseRiskHigh
-    },
+    color = displayColor(),
     isDimmed = isDimmed
 )
+
+/** Quietest first, breaking ties on the raw pedestrian count. */
+private fun List<ScoredRoute>.rankedBySensory(): List<ScoredRoute> =
+    sortedWith(
+        compareBy(
+            { it.sensitivity.rank },
+            { it.avgPedestrianCount ?: Double.MAX_VALUE }
+        )
+    )
+
+private fun Refuge.toGeoPoint() = GeoPoint(latitude, longitude)
+
+private fun Throwable.toUserMessage(): String = when (this) {
+    is HttpException -> "The routing service returned an error (HTTP ${code()})."
+    is IOException ->
+        "Can't reach the routing service. Check your connection, or confirm the " +
+            "API address is still current - the VM's IP is not static."
+    else -> message ?: "Something went wrong while loading routes."
+}
+
+private sealed interface RoutesUiState {
+    data object Loading : RoutesUiState
+    data class Error(val message: String) : RoutesUiState
+    data class Loaded(val origin: GeoPoint, val result: RouteResult) : RoutesUiState
+}
 
 private enum class AppScreen {
     Splash,
@@ -102,6 +142,11 @@ fun SenseNavApp() {
     val repository = remember { MockSenseNavRepository() }
     var screen by remember { mutableStateOf(AppScreen.Splash) }
 
+    // Where the user is routing to. Drives the live /route request.
+    var destination by remember { mutableStateOf(repository.getRefuges().first()) }
+    // Kept so the warning screen can draw the same routes without refetching.
+    var loadedRoutes by remember { mutableStateOf<List<ScoredRoute>>(emptyList()) }
+
     MaterialTheme {
         when (screen) {
             AppScreen.Splash -> SplashScreen(onFinished = { screen = AppScreen.Home })
@@ -113,26 +158,36 @@ fun SenseNavApp() {
             )
             AppScreen.NearbyMap -> NearbyMapScreen(
                 repository = repository,
+                initialRefuge = destination,
                 onBack = { screen = AppScreen.Home },
                 onSearch = { screen = AppScreen.Search },
-                onNavigate = { screen = AppScreen.Routes },
+                onNavigate = { refuge ->
+                    destination = refuge
+                    screen = AppScreen.Routes
+                },
                 onWarning = { screen = AppScreen.Warning }
             )
             AppScreen.Search -> SearchScreen(
                 repository = repository,
                 onBack = { screen = AppScreen.Home },
                 onRouteSelected = { screen = AppScreen.Routes },
-                onRefugeSelected = { screen = AppScreen.NearbyMap },
+                onRefugeSelected = { refuge ->
+                    destination = refuge
+                    screen = AppScreen.NearbyMap
+                },
                 onWarning = { screen = AppScreen.Warning }
             )
             AppScreen.Routes -> RouteOptionsScreen(
-                repository = repository,
+                destination = destination,
+                defaultOrigin = repository.defaultOrigin,
                 onBack = { screen = AppScreen.Search },
                 onWarning = { screen = AppScreen.Warning },
-                onNavigate = { screen = AppScreen.NearbyMap }
+                onNavigate = { screen = AppScreen.NearbyMap },
+                onRoutesLoaded = { loadedRoutes = it }
             )
             AppScreen.Warning -> WarningScreen(
                 repository = repository,
+                routes = loadedRoutes,
                 onBack = { screen = AppScreen.Routes },
                 onReroute = { screen = AppScreen.Routes }
             )
@@ -307,13 +362,14 @@ private fun HomeScreen(
 @Composable
 private fun NearbyMapScreen(
     repository: MockSenseNavRepository,
+    initialRefuge: Refuge,
     onBack: () -> Unit,
     onSearch: () -> Unit,
-    onNavigate: () -> Unit,
+    onNavigate: (Refuge) -> Unit,
     onWarning: () -> Unit
 ) {
     val refuges = repository.getRefuges()
-    var selectedRefuge by remember { mutableStateOf(refuges.first()) }
+    var selectedRefuge by remember { mutableStateOf(initialRefuge) }
     val cameraPositionState = rememberSenseNavCameraState(
         target = LatLng(selectedRefuge.latitude, selectedRefuge.longitude),
         zoom = 14.5f
@@ -383,7 +439,7 @@ private fun NearbyMapScreen(
                 Row {
                     Button(
                         modifier = Modifier.weight(1f),
-                        onClick = onNavigate,
+                        onClick = { onNavigate(selectedRefuge) },
                         colors = ButtonDefaults.buttonColors(containerColor = SenseBlue),
                         shape = RoundedCornerShape(12.dp)
                     ) {
@@ -404,7 +460,7 @@ private fun SearchScreen(
     repository: MockSenseNavRepository,
     onBack: () -> Unit,
     onRouteSelected: () -> Unit,
-    onRefugeSelected: () -> Unit,
+    onRefugeSelected: (Refuge) -> Unit,
     onWarning: () -> Unit
 ) {
     var query by remember { mutableStateOf("") }
@@ -446,10 +502,11 @@ private fun SearchScreen(
             SearchResultRow(
                 result = result,
                 onClick = {
-                    if (result.type == SearchResultType.Route || result.type == SearchResultType.Station) {
-                        onRouteSelected()
-                    } else {
-                        onRefugeSelected()
+                    val refuge = repository.getRefugeDetail(result.id)
+                    when {
+                        refuge != null -> onRefugeSelected(refuge)
+                        result.type == SearchResultType.Route ||
+                            result.type == SearchResultType.Station -> onRouteSelected()
                     }
                 }
             )
@@ -457,30 +514,77 @@ private fun SearchScreen(
 
         Spacer(modifier = Modifier.height(18.dp))
         SectionHeader("Recently Viewed", "See All", null)
-        repository.getRefuges().take(3).forEach {
-            RefugeListItem(refuge = it, onClick = onRefugeSelected)
+        repository.getRefuges().take(3).forEach { refuge ->
+            RefugeListItem(refuge = refuge, onClick = { onRefugeSelected(refuge) })
         }
     }
 }
 
 @Composable
 private fun RouteOptionsScreen(
-    repository: MockSenseNavRepository,
+    destination: Refuge,
+    defaultOrigin: GeoPoint,
     onBack: () -> Unit,
     onWarning: () -> Unit,
-    onNavigate: () -> Unit
+    onNavigate: () -> Unit,
+    onRoutesLoaded: (List<ScoredRoute>) -> Unit
 ) {
-    val routes = repository.getRoutes()
+    val context = LocalContext.current
+    val routeRepository = remember { RouteRepository() }
+    val locationProvider = remember { LocationProvider(context) }
+
+    var retryCount by remember { mutableStateOf(0) }
+    var state by remember { mutableStateOf<RoutesUiState>(RoutesUiState.Loading) }
+    val cameraPositionState = rememberSenseNavCameraState(
+        target = LatLng(destination.latitude, destination.longitude),
+        zoom = 14.2f
+    )
+
+    LaunchedEffect(destination.id, retryCount) {
+        state = RoutesUiState.Loading
+        state = try {
+            // Real device position when we have it; the CBD fallback keeps the
+            // screen usable on an emulator or with location denied.
+            val origin = locationProvider.currentLocation() ?: defaultOrigin
+            val result = routeRepository.getRoutes(origin, destination.toGeoPoint())
+            onRoutesLoaded(result.routes)
+            RoutesUiState.Loaded(origin, result)
+        } catch (cancellation: CancellationException) {
+            throw cancellation
+        } catch (error: Exception) {
+            RoutesUiState.Error(error.toUserMessage())
+        }
+    }
+
+    val loaded = state as? RoutesUiState.Loaded
+    val ranked = loaded?.result?.routes?.rankedBySensory().orEmpty()
+
+    // Frame the whole trip once geometry arrives.
+    LaunchedEffect(ranked) {
+        val allPoints = ranked.flatMap { it.path }
+        if (allPoints.size < 2) return@LaunchedEffect
+        val bounds = LatLngBounds.builder()
+            .apply { allPoints.forEach { include(it.toLatLng()) } }
+            .build()
+        runCatching {
+            cameraPositionState.animate(CameraUpdateFactory.newLatLngBounds(bounds, 120))
+        }.onFailure {
+            // Bounds animation needs a laid-out map; fall back to centring.
+            cameraPositionState.animate(
+                CameraUpdateFactory.newLatLngZoom(bounds.center, 14f)
+            )
+        }
+    }
 
     Column(modifier = Modifier.fillMaxSize().background(Color.White)) {
         Box(modifier = Modifier.fillMaxWidth().weight(1f)) {
             SenseNavMap(
                 modifier = Modifier.fillMaxSize(),
-                routes = routes.map { it.toMapRoute(isDimmed = !it.isRecommended) },
-                cameraPositionState = rememberSenseNavCameraState(
-                    target = RouteMidpoint,
-                    zoom = 14.2f
-                ),
+                // Quietest route drawn last so it sits on top.
+                routes = ranked.mapIndexed { index, route ->
+                    route.toMapRoute(isDimmed = index != 0)
+                },
+                cameraPositionState = cameraPositionState,
                 contentPadding = PaddingValues(top = 90.dp)
             )
             Row(
@@ -489,7 +593,7 @@ private fun RouteOptionsScreen(
                     .padding(horizontal = 16.dp, vertical = 34.dp)
             ) {
                 SearchPill(
-                    text = "Flinders St -> State Library",
+                    text = "To ${destination.name}",
                     modifier = Modifier.weight(1f),
                     onClick = onBack
                 )
@@ -514,14 +618,42 @@ private fun RouteOptionsScreen(
                     SmallRoundButton("X", onBack)
                 }
                 Spacer(modifier = Modifier.height(8.dp))
-                routes.forEach { route ->
-                    RouteCard(
-                        route = route,
-                        onDirections = {
-                            if (route.isRecommended) onNavigate() else onWarning()
-                        }
+
+                when (val current = state) {
+                    is RoutesUiState.Loading -> RoutesLoading()
+
+                    is RoutesUiState.Error -> RoutesError(
+                        message = current.message,
+                        onRetry = { retryCount++ }
                     )
-                    Spacer(modifier = Modifier.height(14.dp))
+
+                    is RoutesUiState.Loaded -> {
+                        if (!current.result.isScored) {
+                            // No sensor coverage: must not imply a sensory rating.
+                            Text(
+                                text = "No pedestrian sensor coverage for this trip - " +
+                                    "showing the plain walking route.",
+                                color = SenseMuted,
+                                fontSize = 12.sp,
+                                lineHeight = 16.sp
+                            )
+                            Spacer(modifier = Modifier.height(12.dp))
+                        }
+                        ranked.forEachIndexed { index, route ->
+                            RouteCard(
+                                route = route,
+                                isRecommended = index == 0 && current.result.isScored,
+                                onDirections = {
+                                    if (route.sensitivity == Sensitivity.High) {
+                                        onWarning()
+                                    } else {
+                                        onNavigate()
+                                    }
+                                }
+                            )
+                            Spacer(modifier = Modifier.height(14.dp))
+                        }
+                    }
                 }
             }
         }
@@ -529,13 +661,46 @@ private fun RouteOptionsScreen(
 }
 
 @Composable
+private fun RoutesLoading() {
+    Row(
+        modifier = Modifier.fillMaxWidth().padding(vertical = 24.dp),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.Center
+    ) {
+        CircularProgressIndicator(modifier = Modifier.size(22.dp), color = SenseBlue)
+        Spacer(modifier = Modifier.width(14.dp))
+        Text("Scoring routes nearby...", color = SenseMuted, fontSize = 14.sp)
+    }
+}
+
+@Composable
+private fun RoutesError(message: String, onRetry: () -> Unit) {
+    Column(modifier = Modifier.fillMaxWidth().padding(vertical = 12.dp)) {
+        Text("Couldn't load routes", color = SenseInk, fontSize = 16.sp, fontWeight = FontWeight.Bold)
+        Spacer(modifier = Modifier.height(6.dp))
+        Text(message, color = SenseMuted, fontSize = 13.sp, lineHeight = 18.sp)
+        Spacer(modifier = Modifier.height(14.dp))
+        Button(
+            onClick = onRetry,
+            colors = ButtonDefaults.buttonColors(containerColor = SenseBlue),
+            shape = RoundedCornerShape(12.dp)
+        ) {
+            Text("Try again")
+        }
+    }
+}
+
+@Composable
 private fun WarningScreen(
     repository: MockSenseNavRepository,
+    routes: List<ScoredRoute>,
     onBack: () -> Unit,
     onReroute: () -> Unit
 ) {
     val warning = repository.getWarnings().first()
-    val flaggedRoute = repository.getRouteDetail(warning.routeId)
+    // The busiest of the routes just scored is the one being warned about.
+    val flaggedRoute = routes.maxByOrNull { it.avgPedestrianCount ?: 0.0 }
+    val mapCentre = flaggedRoute?.path?.let { it[it.size / 2] }
 
     Column(modifier = Modifier.fillMaxSize().background(Color.White)) {
         Box(modifier = Modifier.fillMaxWidth().weight(1f)) {
@@ -543,8 +708,8 @@ private fun WarningScreen(
                 modifier = Modifier.fillMaxSize(),
                 routes = listOfNotNull(flaggedRoute?.toMapRoute()),
                 cameraPositionState = rememberSenseNavCameraState(
-                    target = RouteMidpoint,
-                    zoom = 14.2f
+                    target = mapCentre?.toLatLng() ?: repository.defaultOrigin.toLatLng(),
+                    zoom = 14.5f
                 ),
                 contentPadding = PaddingValues(top = 90.dp)
             )
@@ -702,17 +867,49 @@ private fun SearchResultRow(result: SearchResult, onClick: () -> Unit) {
 }
 
 @Composable
-private fun RouteCard(route: RouteOption, onDirections: () -> Unit) {
+private fun RouteCard(route: ScoredRoute, isRecommended: Boolean, onDirections: () -> Unit) {
     Column(modifier = Modifier.fillMaxWidth()) {
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            Box(
+                modifier = Modifier
+                    .size(12.dp)
+                    .clip(CircleShape)
+                    .background(route.displayColor())
+            )
+            Spacer(modifier = Modifier.width(8.dp))
+            Text(
+                text = route.summary,
+                modifier = Modifier.weight(1f),
+                color = SenseInk,
+                fontSize = 16.sp,
+                fontWeight = FontWeight.Bold,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis
+            )
+            if (isRecommended) {
+                Text("Recommended", color = SenseGreen, fontSize = 12.sp, fontWeight = FontWeight.Bold)
+            }
+        }
+        Spacer(modifier = Modifier.height(4.dp))
         Text(
-            text = "${route.title} (${route.sensoryRisk})",
-            color = SenseInk,
-            fontSize = 16.sp,
+            text = listOfNotNull(
+                route.durationText.takeIf { it.isNotBlank() },
+                route.distanceText.takeIf { it.isNotBlank() }
+            ).joinToString(" - "),
+            color = SenseMuted,
+            fontSize = 13.sp
+        )
+        Text(
+            text = if (route.isScored) {
+                "${route.sensitivity} sensory load" +
+                    (route.avgPedestrianCount?.let { " - ~${it.roundToInt()} people/min nearby" } ?: "")
+            } else {
+                "No sensor data for this route"
+            },
+            color = if (route.isScored) route.displayColor() else SenseMuted,
+            fontSize = 13.sp,
             fontWeight = FontWeight.Bold
         )
-        Spacer(modifier = Modifier.height(4.dp))
-        Text("${route.rating} (${route.reviewCount})  Star Star Star Star", color = SenseMuted, fontSize = 13.sp)
-        Text("Open - ${route.durationMinutes} min - ${route.roadName}", color = SenseMuted, fontSize = 13.sp)
         Spacer(modifier = Modifier.height(12.dp))
         Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
             Button(onClick = onDirections, colors = ButtonDefaults.buttonColors(containerColor = SenseSoftBlue, contentColor = SenseBlue)) {
