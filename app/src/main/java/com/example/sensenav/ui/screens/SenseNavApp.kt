@@ -54,6 +54,12 @@ import com.example.sensenav.model.Refuge
 import com.example.sensenav.model.RouteOption
 import com.example.sensenav.model.SearchResult
 import com.example.sensenav.model.SearchResultType
+import com.example.sensenav.ui.map.MapRoute
+import com.example.sensenav.ui.map.SenseNavMap
+import com.example.sensenav.ui.map.rememberSenseNavCameraState
+import com.example.sensenav.ui.map.toLatLng
+import com.google.android.gms.maps.CameraUpdateFactory
+import com.google.android.gms.maps.model.LatLng
 import kotlinx.coroutines.delay
 
 private val SenseBlue = Color(0xFF2F5FBD)
@@ -63,6 +69,24 @@ private val SenseMuted = Color(0xFF798293)
 private val SensePink = Color(0xFFFF4F86)
 private val SenseGreen = Color(0xFF1B9F5A)
 private val ScreenBg = Color(0xFFF7F9FD)
+
+// Route stroke colours, matching the scoring API's sensitivity palette.
+private val SenseRiskLow = Color(0xFF3B8BD4)
+private val SenseRiskMedium = Color(0xFFEF9F27)
+private val SenseRiskHigh = Color(0xFFE24B4A)
+
+/** Roughly halfway along the Flinders St -> State Library demo trip. */
+private val RouteMidpoint = LatLng(-37.8140, 144.9668)
+
+private fun RouteOption.toMapRoute(isDimmed: Boolean = false) = MapRoute(
+    points = path.map { it.toLatLng() },
+    color = when {
+        sensoryScore >= 70 -> SenseRiskLow
+        sensoryScore >= 45 -> SenseRiskMedium
+        else -> SenseRiskHigh
+    },
+    isDimmed = isDimmed
+)
 
 private enum class AppScreen {
     Splash,
@@ -288,10 +312,34 @@ private fun NearbyMapScreen(
     onNavigate: () -> Unit,
     onWarning: () -> Unit
 ) {
-    val refuge = repository.getRefuges().first()
+    val refuges = repository.getRefuges()
+    var selectedRefuge by remember { mutableStateOf(refuges.first()) }
+    val cameraPositionState = rememberSenseNavCameraState(
+        target = LatLng(selectedRefuge.latitude, selectedRefuge.longitude),
+        zoom = 14.5f
+    )
+
+    // Follow the selection, whether it came from a marker tap or the bottom card.
+    LaunchedEffect(selectedRefuge.id) {
+        cameraPositionState.animate(
+            CameraUpdateFactory.newLatLngZoom(
+                LatLng(selectedRefuge.latitude, selectedRefuge.longitude),
+                15f
+            )
+        )
+    }
 
     Box(modifier = Modifier.fillMaxSize()) {
-        FakeMap(showRoute = false, modifier = Modifier.fillMaxSize())
+        SenseNavMap(
+            modifier = Modifier.fillMaxSize(),
+            refuges = refuges,
+            selectedRefugeId = selectedRefuge.id,
+            onRefugeClick = { selectedRefuge = it },
+            cameraPositionState = cameraPositionState,
+            enableMyLocation = true,
+            // Keeps the Google logo and controls clear of the overlays.
+            contentPadding = PaddingValues(top = 150.dp, bottom = 210.dp)
+        )
 
         Row(
             modifier = Modifier
@@ -320,10 +368,6 @@ private fun NearbyMapScreen(
             onClick = onSearch
         )
 
-        MapBubble("4.0", Modifier.align(Alignment.CenterStart).padding(start = 80.dp))
-        MapBubble("4.7", Modifier.align(Alignment.Center).padding(top = 110.dp))
-        MapBubble("4.5", Modifier.align(Alignment.CenterEnd).padding(end = 45.dp))
-
         Card(
             modifier = Modifier
                 .align(Alignment.BottomCenter)
@@ -334,7 +378,7 @@ private fun NearbyMapScreen(
             elevation = CardDefaults.cardElevation(defaultElevation = 8.dp)
         ) {
             Column(modifier = Modifier.padding(16.dp)) {
-                RefugeListItem(refuge = refuge, onClick = {})
+                RefugeListItem(refuge = selectedRefuge, onClick = {})
                 Spacer(modifier = Modifier.height(12.dp))
                 Row {
                     Button(
@@ -430,7 +474,15 @@ private fun RouteOptionsScreen(
 
     Column(modifier = Modifier.fillMaxSize().background(Color.White)) {
         Box(modifier = Modifier.fillMaxWidth().weight(1f)) {
-            FakeMap(showRoute = true, modifier = Modifier.fillMaxSize())
+            SenseNavMap(
+                modifier = Modifier.fillMaxSize(),
+                routes = routes.map { it.toMapRoute(isDimmed = !it.isRecommended) },
+                cameraPositionState = rememberSenseNavCameraState(
+                    target = RouteMidpoint,
+                    zoom = 14.2f
+                ),
+                contentPadding = PaddingValues(top = 90.dp)
+            )
             Row(
                 modifier = Modifier
                     .fillMaxWidth()
@@ -483,10 +535,19 @@ private fun WarningScreen(
     onReroute: () -> Unit
 ) {
     val warning = repository.getWarnings().first()
+    val flaggedRoute = repository.getRouteDetail(warning.routeId)
 
     Column(modifier = Modifier.fillMaxSize().background(Color.White)) {
         Box(modifier = Modifier.fillMaxWidth().weight(1f)) {
-            FakeMap(showRoute = true, modifier = Modifier.fillMaxSize())
+            SenseNavMap(
+                modifier = Modifier.fillMaxSize(),
+                routes = listOfNotNull(flaggedRoute?.toMapRoute()),
+                cameraPositionState = rememberSenseNavCameraState(
+                    target = RouteMidpoint,
+                    zoom = 14.2f
+                ),
+                contentPadding = PaddingValues(top = 90.dp)
+            )
             SmallRoundButton(
                 text = "<",
                 onClick = onBack,
@@ -668,43 +729,6 @@ private fun RouteCard(route: RouteOption, onDirections: () -> Unit) {
 }
 
 @Composable
-private fun FakeMap(showRoute: Boolean, modifier: Modifier) {
-    Box(modifier = modifier.background(Color(0xFFF4F6F8))) {
-        Canvas(modifier = Modifier.fillMaxSize()) {
-            val road = Color(0xFFE1E4EA)
-            val park = Color(0xFFBFE8C8)
-
-            drawRect(park, topLeft = Offset(size.width * 0.05f, size.height * 0.05f), size = androidx.compose.ui.geometry.Size(size.width * 0.30f, size.height * 0.16f))
-            drawRect(park, topLeft = Offset(size.width * 0.70f, size.height * 0.12f), size = androidx.compose.ui.geometry.Size(size.width * 0.23f, size.height * 0.14f))
-            drawRect(park, topLeft = Offset(size.width * 0.08f, size.height * 0.68f), size = androidx.compose.ui.geometry.Size(size.width * 0.28f, size.height * 0.16f))
-
-            for (i in 0..8) {
-                val y = size.height * (0.10f + i * 0.10f)
-                drawLine(road, Offset(0f, y), Offset(size.width, y + 50f), strokeWidth = 6f)
-            }
-            for (i in 0..7) {
-                val x = size.width * (0.08f + i * 0.13f)
-                drawLine(road, Offset(x, 0f), Offset(x - 80f, size.height), strokeWidth = 5f)
-            }
-            if (showRoute) {
-                val route = Color(0xFF173B3F)
-                val p1 = Offset(size.width * 0.35f, size.height * 0.28f)
-                val p2 = Offset(size.width * 0.43f, size.height * 0.46f)
-                val p3 = Offset(size.width * 0.33f, size.height * 0.60f)
-                val p4 = Offset(size.width * 0.56f, size.height * 0.72f)
-                drawLine(route, p1, p2, strokeWidth = 9f)
-                drawLine(route, p2, p3, strokeWidth = 9f)
-                drawLine(route, p3, p4, strokeWidth = 9f)
-            }
-        }
-        if (showRoute) {
-            Text("Flinders St", modifier = Modifier.padding(start = 118.dp, top = 145.dp), color = SensePink, fontSize = 12.sp, fontWeight = FontWeight.Bold)
-            Text("State Library", modifier = Modifier.padding(start = 205.dp, top = 286.dp), color = SensePink, fontSize = 12.sp, fontWeight = FontWeight.Bold)
-        }
-    }
-}
-
-@Composable
 private fun ImageBlock(label: String, modifier: Modifier) {
     Box(
         modifier = modifier.background(Brush.linearGradient(listOf(Color(0xFFB9D3F5), Color(0xFF7A94C5), Color(0xFF365486)))),
@@ -754,19 +778,6 @@ private fun SmallRoundButton(text: String, onClick: () -> Unit, modifier: Modifi
         contentAlignment = Alignment.Center
     ) {
         Text(text, color = SenseInk, fontSize = 11.sp, fontWeight = FontWeight.Bold)
-    }
-}
-
-@Composable
-private fun MapBubble(text: String, modifier: Modifier) {
-    Box(
-        modifier = modifier
-            .clip(RoundedCornerShape(16.dp))
-            .background(Color.White)
-            .padding(horizontal = 10.dp, vertical = 6.dp),
-        contentAlignment = Alignment.Center
-    ) {
-        Text("Star $text", color = SenseInk, fontSize = 12.sp, fontWeight = FontWeight.Bold)
     }
 }
 

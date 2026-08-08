@@ -1,5 +1,6 @@
 package com.example.sensenav.data
 
+import com.example.sensenav.model.GeoPoint
 import com.example.sensenav.model.Refuge
 import com.example.sensenav.model.RouteOption
 import com.example.sensenav.model.SearchResult
@@ -7,6 +8,11 @@ import com.example.sensenav.model.SearchResultType
 import com.example.sensenav.model.WarningInfo
 
 class MockSenseNavRepository {
+    // Flinders Street Station -> State Library Victoria, the pair the route and
+    // warning screens demo. Replaced by decoded API polylines once /route is wired up.
+    private val flindersStreetStation = GeoPoint(-37.8183, 144.9671)
+    private val stateLibrary = GeoPoint(-37.8098, 144.9652)
+
     private val refuges = listOf(
         Refuge(
             id = "refuge_state_library",
@@ -66,7 +72,16 @@ class MockSenseNavRepository {
             durationMinutes = 5,
             roadName = "Highway Road",
             isRecommended = false,
-            sensoryScore = 42
+            sensoryScore = 42,
+            // Straight up Swanston St - shortest, but past Bourke St Mall.
+            path = listOf(
+                flindersStreetStation,
+                GeoPoint(-37.8175, 144.9666),
+                GeoPoint(-37.8152, 144.9657),
+                GeoPoint(-37.8130, 144.9650),
+                GeoPoint(-37.8110, 144.9648),
+                stateLibrary
+            )
         ),
         RouteOption(
             id = "route_low_sensory",
@@ -77,7 +92,16 @@ class MockSenseNavRepository {
             durationMinutes = 5,
             roadName = "Downtown Road",
             isRecommended = true,
-            sensoryScore = 86
+            sensoryScore = 86,
+            // Swings east via the quieter Russell St side streets.
+            path = listOf(
+                flindersStreetStation,
+                GeoPoint(-37.8176, 144.9690),
+                GeoPoint(-37.8150, 144.9700),
+                GeoPoint(-37.8125, 144.9685),
+                GeoPoint(-37.8105, 144.9668),
+                stateLibrary
+            )
         )
     )
 

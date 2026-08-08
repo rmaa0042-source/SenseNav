@@ -1,5 +1,14 @@
 package com.example.sensenav.model
 
+/**
+ * A single point on a route path. The scoring API returns each route as a
+ * Google-encoded polyline string, which decodes into a list of these.
+ */
+data class GeoPoint(
+    val latitude: Double,
+    val longitude: Double
+)
+
 data class Refuge(
     val id: String,
     val name: String,
@@ -22,7 +31,8 @@ data class RouteOption(
     val durationMinutes: Int,
     val roadName: String,
     val isRecommended: Boolean,
-    val sensoryScore: Int
+    val sensoryScore: Int,
+    val path: List<GeoPoint> = emptyList()
 )
 
 data class WarningInfo(
