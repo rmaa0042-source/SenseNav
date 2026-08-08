@@ -13,9 +13,11 @@ public class WarningService {
                     1L,
                     "Sensory Overload Warning",
                     "Bourke Street Mall",
-                    "Crowd density is currently at 85% with a high noise risk.",
+                    "High Congestion + High Noise Risks",
                     "City of Melbourne Pedestrian Sensors",
-                    "Reroute to Low Sensory Path"
+                    "Reroute to Low Sensory Path",
+                    85,
+                    "route_direct"
             )
     );
 

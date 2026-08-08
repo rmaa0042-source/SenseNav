@@ -1,12 +1,12 @@
 <?xml version="1.0" encoding="utf-8"?>
 <network-security-config>
-    <!--
-        Android blocks cleartext HTTP by default since API 28. The SenseNav routing
-        API is served over plain HTTP on a bare IP, so it needs an explicit
-        exemption. Scoped to that host only - everything else stays HTTPS-only.
-        Remove this block once the API is fronted by TLS.
-    -->
+
     <domain-config cleartextTrafficPermitted="true">
         <domain includeSubdomains="false">34.172.95.142</domain>
     </domain-config>
+
+    <domain-config cleartextTrafficPermitted="true">
+        <domain includeSubdomains="false">10.0.2.2</domain>
+    </domain-config>
+
 </network-security-config>

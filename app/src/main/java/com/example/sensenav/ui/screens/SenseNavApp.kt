@@ -84,6 +84,9 @@ import retrofit2.HttpException
 import java.io.IOException
 import kotlin.math.roundToInt
 import android.graphics.Color as AndroidColor
+import com.example.sensenav.data.RefugeRepository
+import com.example.sensenav.data.WarningRepository
+import com.example.sensenav.model.WarningInfo
 
 private val SenseBlue = Color(0xFF2F5FBD)
 private val SenseSoftBlue = Color(0xFFEAF2FF)
@@ -160,9 +163,35 @@ private enum class AppScreen {
 fun SenseNavApp() {
     val repository = remember { MockSenseNavRepository() }
     var screen by remember { mutableStateOf(AppScreen.Splash) }
+    val warningRepository = remember { WarningRepository() }
+    val refugeRepository = remember { RefugeRepository() }
 
-    // Where the user is routing to. Drives the live /route request.
+    var refuges by remember { mutableStateOf<List<Refuge>>(emptyList()) }
+    var warnings by remember { mutableStateOf<List<WarningInfo>>(emptyList()) }
+
+    LaunchedEffect(Unit) {
+        refuges = try {
+            refugeRepository.getRefuges()
+        } catch (e: Exception) {
+            repository.getRefuges()
+        }
+    }
+
+    LaunchedEffect(Unit) {
+        warnings = try {
+            warningRepository.getWarnings()
+        } catch (e: Exception) {
+            repository.getWarnings()
+        }
+    }
+
     var destination by remember { mutableStateOf(repository.getRefuges().first()) }
+
+    LaunchedEffect(refuges) {
+        if (refuges.isNotEmpty()) {
+            destination = refuges.first()
+        }
+    }
     // Kept so the warning screen can draw the same routes without refetching.
     var loadedRoutes by remember { mutableStateOf<List<ScoredRoute>>(emptyList()) }
 
@@ -179,13 +208,13 @@ fun SenseNavApp() {
         when (screen) {
             AppScreen.Splash -> SplashScreen(onFinished = { screen = AppScreen.Home })
             AppScreen.Home -> HomeScreen(
-                repository = repository,
+                refuges = refuges,
                 onSearch = { screen = AppScreen.Search },
                 onNearbyMap = { screen = AppScreen.NearbyMap },
                 onWarning = { screen = AppScreen.Warning }
             )
             AppScreen.NearbyMap -> NearbyMapScreen(
-                repository = repository,
+                refuges = refuges,
                 initialRefuge = destination,
                 onBack = { screen = AppScreen.Home },
                 onSearch = { screen = AppScreen.Search },
@@ -197,6 +226,7 @@ fun SenseNavApp() {
             )
             AppScreen.Search -> SearchScreen(
                 repository = repository,
+                refuges = refuges,
                 onBack = { screen = AppScreen.Home },
                 onRouteSelected = { screen = AppScreen.Routes },
                 onRefugeSelected = { refuge ->
@@ -214,7 +244,7 @@ fun SenseNavApp() {
                 onRoutesLoaded = { loadedRoutes = it }
             )
             AppScreen.Warning -> WarningScreen(
-                repository = repository,
+                warnings = warnings,
                 routes = loadedRoutes,
                 onBack = { screen = AppScreen.Routes },
                 onReroute = { screen = AppScreen.Routes }
@@ -285,12 +315,11 @@ private fun SplashScreen(onFinished: () -> Unit) {
 
 @Composable
 private fun HomeScreen(
-    repository: MockSenseNavRepository,
+    refuges: List<Refuge>,
     onSearch: () -> Unit,
     onNearbyMap: () -> Unit,
     onWarning: () -> Unit
 ) {
-    val refuges = repository.getRefuges()
 
     Scaffold(
         containerColor = Color.White,
@@ -389,14 +418,13 @@ private fun HomeScreen(
 
 @Composable
 private fun NearbyMapScreen(
-    repository: MockSenseNavRepository,
+    refuges: List<Refuge>,
     initialRefuge: Refuge,
     onBack: () -> Unit,
     onSearch: () -> Unit,
     onNavigate: (Refuge) -> Unit,
     onWarning: () -> Unit
 ) {
-    val refuges = repository.getRefuges()
     var selectedRefuge by remember { mutableStateOf(initialRefuge) }
     val cameraPositionState = rememberSenseNavCameraState(
         target = LatLng(selectedRefuge.latitude, selectedRefuge.longitude),
@@ -404,14 +432,16 @@ private fun NearbyMapScreen(
     )
 
     // Follow the selection, whether it came from a marker tap or the bottom card.
-    LaunchedEffect(selectedRefuge.id) {
-        cameraPositionState.animate(
-            CameraUpdateFactory.newLatLngZoom(
-                LatLng(selectedRefuge.latitude, selectedRefuge.longitude),
-                15f
-            )
-        )
-    }
+//    LaunchedEffect(selectedRefuge.id, cameraPositionState.isMoving) {
+//        if (cameraPositionState.position.zoom > 0f) {
+//                cameraPositionState.animate(
+//                    CameraUpdateFactory.newLatLngZoom(
+//                        LatLng(selectedRefuge.latitude, selectedRefuge.longitude),
+//                        15f
+//                    )
+//                )
+//            }
+//        }
 
     Box(modifier = Modifier.fillMaxSize()) {
         SenseNavMap(
@@ -486,13 +516,34 @@ private fun NearbyMapScreen(
 @Composable
 private fun SearchScreen(
     repository: MockSenseNavRepository,
+    refuges: List<Refuge>,
     onBack: () -> Unit,
     onRouteSelected: () -> Unit,
     onRefugeSelected: (Refuge) -> Unit,
     onWarning: () -> Unit
 ) {
     var query by remember { mutableStateOf("") }
-    val shown = if (query.isBlank()) repository.getRecentSearches() else repository.search(query)
+    val shown = if (query.isBlank()) {
+        repository.getRecentSearches()
+    } else {
+        val normalized = query.trim().lowercase()
+
+        refuges
+            .filter {
+                it.name.lowercase().contains(normalized) ||
+                        it.subtitle.lowercase().contains(normalized) ||
+                        it.sensoryTag.lowercase().contains(normalized)
+            }
+            .map {
+                SearchResult(
+                    id = it.id,
+                    title = it.name,
+                    subtitle = it.subtitle,
+                    type = SearchResultType.Refuge,
+                    sensoryLabel = it.sensoryTag
+                )
+            }
+    }
 
     Column(
         modifier = Modifier
@@ -531,7 +582,9 @@ private fun SearchScreen(
             SearchResultRow(
                 result = result,
                 onClick = {
-                    val refuge = repository.getRefugeDetail(result.id)
+                    val refuge = refuges.firstOrNull {
+                        it.name.equals(result.title, ignoreCase = true)
+                    } ?: repository.getRefugeDetail(result.id)
                     when {
                         refuge != null -> onRefugeSelected(refuge)
                         result.type == SearchResultType.Route ||
@@ -543,7 +596,7 @@ private fun SearchScreen(
 
         Spacer(modifier = Modifier.height(18.dp))
         SectionHeader("Recently Viewed", "See All", null)
-        repository.getRefuges().take(3).forEach { refuge ->
+        refuges.take(3).forEach { refuge ->
             RefugeListItem(refuge = refuge, onClick = { onRefugeSelected(refuge) })
         }
     }
@@ -919,12 +972,12 @@ private fun RoutesError(message: String, onRetry: () -> Unit) {
 
 @Composable
 private fun WarningScreen(
-    repository: MockSenseNavRepository,
+    warnings: List<WarningInfo>,
     routes: List<ScoredRoute>,
     onBack: () -> Unit,
     onReroute: () -> Unit
 ) {
-    val warning = repository.getWarnings().first()
+    val warning = warnings.firstOrNull() ?: return
     // The busiest of the routes just scored is the one being warned about.
     val flaggedRoute = routes.maxByOrNull { it.avgPedestrianCount ?: 0.0 }
     val mapCentre = flaggedRoute?.path?.let { it[it.size / 2] }
@@ -935,7 +988,7 @@ private fun WarningScreen(
                 modifier = Modifier.fillMaxSize(),
                 routes = listOfNotNull(flaggedRoute?.toMapRoute()),
                 cameraPositionState = rememberSenseNavCameraState(
-                    target = mapCentre?.toLatLng() ?: repository.defaultOrigin.toLatLng(),
+                    target = mapCentre?.toLatLng() ?: LatLng(-37.8183, 144.9671),
                     zoom = 14.5f
                 ),
                 contentPadding = PaddingValues(top = 90.dp)

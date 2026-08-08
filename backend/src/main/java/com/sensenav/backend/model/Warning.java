@@ -8,6 +8,8 @@ public class Warning {
     private String description;
     private String dataSource;
     private String suggestedAction;
+    private Integer densityPercent;
+    private String routeId;
 
     public Warning(
             Long id,
@@ -15,7 +17,9 @@ public class Warning {
             String location,
             String description,
             String dataSource,
-            String suggestedAction
+            String suggestedAction,
+            Integer densityPercent,
+            String routeId
     ) {
         this.id = id;
         this.title = title;
@@ -23,6 +27,8 @@ public class Warning {
         this.description = description;
         this.dataSource = dataSource;
         this.suggestedAction = suggestedAction;
+        this.densityPercent = densityPercent;
+        this.routeId = routeId;
     }
 
     public Long getId() {
@@ -48,4 +54,8 @@ public class Warning {
     public String getSuggestedAction() {
         return suggestedAction;
     }
+
+    public Integer getDensityPercent() { return densityPercent; }
+
+    public String getRouteId() { return routeId; }
 }
