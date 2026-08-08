@@ -87,6 +87,7 @@ import android.graphics.Color as AndroidColor
 import com.example.sensenav.data.RefugeRepository
 import com.example.sensenav.data.WarningRepository
 import com.example.sensenav.model.WarningInfo
+import com.example.sensenav.data.SearchRepository
 
 private val SenseBlue = Color(0xFF2F5FBD)
 private val SenseSoftBlue = Color(0xFFEAF2FF)
@@ -165,6 +166,7 @@ fun SenseNavApp() {
     var screen by remember { mutableStateOf(AppScreen.Splash) }
     val warningRepository = remember { WarningRepository() }
     val refugeRepository = remember { RefugeRepository() }
+    val searchRepository = remember { SearchRepository() }
 
     var refuges by remember { mutableStateOf<List<Refuge>>(emptyList()) }
     var warnings by remember { mutableStateOf<List<WarningInfo>>(emptyList()) }
@@ -227,6 +229,7 @@ fun SenseNavApp() {
             AppScreen.Search -> SearchScreen(
                 repository = repository,
                 refuges = refuges,
+                searchRepository = searchRepository,
                 onBack = { screen = AppScreen.Home },
                 onRouteSelected = { screen = AppScreen.Routes },
                 onRefugeSelected = { refuge ->
@@ -517,32 +520,41 @@ private fun NearbyMapScreen(
 private fun SearchScreen(
     repository: MockSenseNavRepository,
     refuges: List<Refuge>,
+    searchRepository: SearchRepository,
     onBack: () -> Unit,
     onRouteSelected: () -> Unit,
     onRefugeSelected: (Refuge) -> Unit,
     onWarning: () -> Unit
 ) {
     var query by remember { mutableStateOf("") }
+    var backendSearchResults by remember {
+        mutableStateOf<List<SearchResult>>(emptyList())
+    }
+
+    LaunchedEffect(query) {
+        if (query.isBlank()) {
+            backendSearchResults = emptyList()
+        } else {
+            backendSearchResults = try {
+                searchRepository.search(query).map {
+                    SearchResult(
+                        id = it.id.toString(),
+                        title = it.name,
+                        subtitle = it.address,
+                        type = SearchResultType.Refuge,
+                        sensoryLabel = it.sensoryLevel
+                    )
+                }
+            } catch (e: Exception) {
+                emptyList()
+            }
+        }
+    }
+
     val shown = if (query.isBlank()) {
         repository.getRecentSearches()
     } else {
-        val normalized = query.trim().lowercase()
-
-        refuges
-            .filter {
-                it.name.lowercase().contains(normalized) ||
-                        it.subtitle.lowercase().contains(normalized) ||
-                        it.sensoryTag.lowercase().contains(normalized)
-            }
-            .map {
-                SearchResult(
-                    id = it.id,
-                    title = it.name,
-                    subtitle = it.subtitle,
-                    type = SearchResultType.Refuge,
-                    sensoryLabel = it.sensoryTag
-                )
-            }
+        backendSearchResults
     }
 
     Column(
