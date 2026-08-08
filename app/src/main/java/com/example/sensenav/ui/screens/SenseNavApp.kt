@@ -2,6 +2,7 @@ package com.example.sensenav.ui.screens
 
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
+import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -139,7 +140,11 @@ private fun Throwable.toUserMessage(): String = when (this) {
 private sealed interface RoutesUiState {
     data object Loading : RoutesUiState
     data class Error(val message: String) : RoutesUiState
-    data class Loaded(val origin: GeoPoint, val result: RouteResult) : RoutesUiState
+    data class Loaded(
+        val origin: GeoPoint,
+        val destination: GeoPoint,
+        val result: RouteResult
+    ) : RoutesUiState
 }
 
 private enum class AppScreen {
@@ -598,7 +603,7 @@ private fun RouteOptionsScreen(
 
             val result = routeRepository.getRoutes(origin, target)
             onRoutesLoaded(result.routes)
-            RoutesUiState.Loaded(origin, result)
+            RoutesUiState.Loaded(origin, target, result)
         } catch (cancellation: CancellationException) {
             throw cancellation
         } catch (error: Exception) {
@@ -640,6 +645,10 @@ private fun RouteOptionsScreen(
                 routes = ranked.mapIndexed { index, route ->
                     route.toMapRoute(isDimmed = index != 0)
                 },
+                origin = loaded?.origin?.toLatLng(),
+                destination = loaded?.destination?.toLatLng(),
+                originColor = SenseBlue,
+                destinationColor = SensePink,
                 cameraPositionState = cameraPositionState,
                 contentPadding = PaddingValues(top = 250.dp)
             )
@@ -732,9 +741,9 @@ private fun RoutePlannerCard(
         colors = CardDefaults.cardColors(containerColor = Color.White),
         elevation = CardDefaults.cardElevation(defaultElevation = 6.dp)
     ) {
-        Column(modifier = Modifier.padding(12.dp)) {
+        Column(modifier = Modifier.padding(14.dp)) {
             PlaceField(
-                label = "From",
+                marker = { OriginDot() },
                 value = originInput,
                 onValueChange = onOriginInputChange,
                 placeholder = "My location",
@@ -742,10 +751,10 @@ private fun RoutePlannerCard(
                 onSubmit = onSubmit
             )
 
-            Spacer(modifier = Modifier.height(6.dp))
+            EndpointConnector()
 
             PlaceField(
-                label = "To",
+                marker = { DestinationDot() },
                 value = destinationInput,
                 onValueChange = onDestinationInputChange,
                 placeholder = "Where to?",
@@ -753,22 +762,72 @@ private fun RoutePlannerCard(
                 onSubmit = onSubmit
             )
 
-            Spacer(modifier = Modifier.height(6.dp))
+            Spacer(modifier = Modifier.height(10.dp))
             Button(
                 modifier = Modifier.fillMaxWidth(),
                 onClick = onSubmit,
                 colors = ButtonDefaults.buttonColors(containerColor = SenseBlue),
                 shape = RoundedCornerShape(12.dp)
             ) {
-                Text(if (originInput.isBlank()) "Route from my location" else "Find routes")
+                Text("Route")
             }
         }
     }
 }
 
+/** Hollow ring for the start point, mirroring the usual maps convention. */
+@Composable
+private fun OriginDot() {
+    Box(
+        modifier = Modifier
+            .size(14.dp)
+            .clip(CircleShape)
+            .background(Color.White)
+            .border(width = 3.dp, color = SenseBlue, shape = CircleShape)
+    )
+}
+
+/** Solid rounded square for the destination, so the two ends read differently. */
+@Composable
+private fun DestinationDot() {
+    Box(
+        modifier = Modifier
+            .size(12.dp)
+            .clip(RoundedCornerShape(3.dp))
+            .background(SensePink)
+    )
+}
+
+/** The trail of dots joining the two endpoint markers. */
+@Composable
+private fun EndpointConnector() {
+    Row(modifier = Modifier.fillMaxWidth()) {
+        Canvas(
+            modifier = Modifier
+                .width(MarkerColumnWidth)
+                .height(18.dp)
+        ) {
+            val centreX = size.width / 2f
+            val step = 6.dp.toPx()
+            val radius = 1.6.dp.toPx()
+            var y = step / 2f
+            while (y < size.height) {
+                drawCircle(
+                    color = SenseMuted.copy(alpha = 0.45f),
+                    radius = radius,
+                    center = Offset(centreX, y)
+                )
+                y += step
+            }
+        }
+    }
+}
+
+private val MarkerColumnWidth = 22.dp
+
 @Composable
 private fun PlaceField(
-    label: String,
+    marker: @Composable () -> Unit,
     value: String,
     onValueChange: (String) -> Unit,
     placeholder: String,
@@ -778,13 +837,13 @@ private fun PlaceField(
     val focusManager = LocalFocusManager.current
 
     Row(verticalAlignment = Alignment.CenterVertically) {
-        Text(
-            text = label,
-            modifier = Modifier.width(46.dp),
-            color = SenseMuted,
-            fontSize = 12.sp,
-            fontWeight = FontWeight.Bold
-        )
+        Box(
+            modifier = Modifier.width(MarkerColumnWidth),
+            contentAlignment = Alignment.Center
+        ) {
+            marker()
+        }
+        Spacer(modifier = Modifier.width(6.dp))
         OutlinedTextField(
             value = value,
             onValueChange = onValueChange,

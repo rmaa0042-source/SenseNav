@@ -2,6 +2,7 @@ package com.example.sensenav.ui.map
 
 import android.Manifest
 import android.content.pm.PackageManager
+import android.graphics.Paint
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.background
@@ -20,16 +21,21 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.toArgb
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalInspectionMode
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.core.content.ContextCompat
+import androidx.core.graphics.createBitmap
 import com.example.sensenav.BuildConfig
 import com.example.sensenav.model.GeoPoint
 import com.example.sensenav.model.Refuge
+import com.google.android.gms.maps.model.BitmapDescriptor
 import com.google.android.gms.maps.model.BitmapDescriptorFactory
 import com.google.android.gms.maps.model.CameraPosition
 import com.google.android.gms.maps.model.LatLng
@@ -42,6 +48,8 @@ import com.google.maps.android.compose.Marker
 import com.google.maps.android.compose.Polyline
 import com.google.maps.android.compose.rememberCameraPositionState
 import com.google.maps.android.compose.rememberMarkerState
+import android.graphics.Canvas as AndroidCanvas
+import android.graphics.Color as AndroidColor
 
 /** Melbourne CBD - the fallback camera target when nothing else is selected. */
 val MelbourneCbd = LatLng(-37.8136, 144.9631)
@@ -54,6 +62,28 @@ data class MapRoute(
     val color: Color,
     val isDimmed: Boolean = false
 )
+
+private val EndpointDotSize = 26.dp
+
+/**
+ * A filled dot with a white ring, matching the start/end markers in the route
+ * planner card. Built as a bitmap rather than a geographic circle so it keeps a
+ * constant on-screen size at every zoom level.
+ */
+private fun buildDotIcon(fillArgb: Int, diameterPx: Int): BitmapDescriptor {
+    val bitmap = createBitmap(diameterPx, diameterPx)
+    val canvas = AndroidCanvas(bitmap)
+    val paint = Paint(Paint.ANTI_ALIAS_FLAG)
+    val centre = diameterPx / 2f
+
+    // White ring first, so the dot separates from whatever it sits on.
+    paint.color = AndroidColor.WHITE
+    canvas.drawCircle(centre, centre, centre, paint)
+    paint.color = fillArgb
+    canvas.drawCircle(centre, centre, centre * 0.62f, paint)
+
+    return BitmapDescriptorFactory.fromBitmap(bitmap)
+}
 
 @Composable
 fun rememberSenseNavCameraState(
@@ -75,6 +105,10 @@ fun SenseNavMap(
     selectedRefugeId: String? = null,
     onRefugeClick: (Refuge) -> Unit = {},
     routes: List<MapRoute> = emptyList(),
+    origin: LatLng? = null,
+    destination: LatLng? = null,
+    originColor: Color = Color(0xFF2F5FBD),
+    destinationColor: Color = Color(0xFFFF4F86),
     cameraPositionState: CameraPositionState = rememberSenseNavCameraState(),
     enableMyLocation: Boolean = false,
     contentPadding: PaddingValues = PaddingValues(0.dp)
@@ -136,6 +170,42 @@ fun SenseNavMap(
                     width = if (route.isDimmed) 10f else 16f
                 )
             }
+        }
+
+        // Endpoint dots, drawn above the routes so A and B stay readable.
+        val density = LocalDensity.current
+        val dotSizePx = remember(density) { with(density) { EndpointDotSize.roundToPx() } }
+
+        origin?.let { point ->
+            val icon = remember(originColor, dotSizePx) {
+                buildDotIcon(originColor.toArgb(), dotSizePx)
+            }
+            Marker(
+                state = rememberMarkerState(
+                    key = "origin-${point.latitude},${point.longitude}",
+                    position = point
+                ),
+                title = "Start",
+                icon = icon,
+                anchor = Offset(0.5f, 0.5f), // centre the dot on the point
+                zIndex = 1f
+            )
+        }
+
+        destination?.let { point ->
+            val icon = remember(destinationColor, dotSizePx) {
+                buildDotIcon(destinationColor.toArgb(), dotSizePx)
+            }
+            Marker(
+                state = rememberMarkerState(
+                    key = "destination-${point.latitude},${point.longitude}",
+                    position = point
+                ),
+                title = "Destination",
+                icon = icon,
+                anchor = Offset(0.5f, 0.5f),
+                zIndex = 1f
+            )
         }
 
         refuges.forEach { refuge ->
