@@ -715,7 +715,7 @@ private fun RouteOptionsScreen(
                 originColor = SenseBlue,
                 destinationColor = SensePink,
                 cameraPositionState = cameraPositionState,
-                contentPadding = PaddingValues(top = 250.dp)
+                contentPadding = PaddingValues(top = 300.dp)
             )
             RoutePlannerCard(
                 originInput = originInput,
@@ -726,7 +726,15 @@ private fun RouteOptionsScreen(
                 modifier = Modifier
                     .fillMaxWidth()
                     .padding(horizontal = 16.dp)
-                    .padding(top = 34.dp)
+                    // Clears the back button sitting above it.
+                    .padding(top = 90.dp)
+            )
+            SmallRoundButton(
+                text = "<",
+                onClick = onBack,
+                modifier = Modifier
+                    .align(Alignment.TopStart)
+                    .padding(start = 16.dp, top = 34.dp)
             )
         }
 
