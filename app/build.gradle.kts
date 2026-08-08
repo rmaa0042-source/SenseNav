@@ -1,3 +1,4 @@
+import com.android.build.api.artifact.SingleArtifact
 import java.util.Properties
 
 plugins {
@@ -61,6 +62,31 @@ android {
     buildFeatures {
         compose = true
         buildConfig = true
+    }
+}
+
+// Mirrors the newest APK of each variant to <repo>/builds, so the current build
+// is easy to find and hand to someone without digging through app/build/outputs
+// (which is gitignored and wiped by `clean`). Runs automatically after assemble.
+val buildsDir = rootProject.layout.projectDirectory.dir("builds")
+
+androidComponents {
+    onVariants { variant ->
+        val variantName = variant.name.replaceFirstChar { it.uppercase() }
+        val copyApk = tasks.register<Copy>("copy${variantName}ApkToBuilds") {
+            group = "build"
+            description = "Copies the ${variant.name} APK into builds/."
+            from(variant.artifacts.get(SingleArtifact.APK)) {
+                include("*.apk")
+            }
+            into(buildsDir)
+            rename { "sensenav-${variant.name}-latest.apk" }
+        }
+        // matching{}.configureEach is lazy - the assemble tasks are not created
+        // yet at the point onVariants runs, so tasks.named() would fail here.
+        tasks.matching { it.name == "assemble$variantName" }.configureEach {
+            finalizedBy(copyApk)
+        }
     }
 }
 

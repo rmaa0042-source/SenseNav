@@ -13,3 +13,9 @@
 .externalNativeBuild
 .cxx
 local.properties
+
+# APKs mirrored into builds/ by the copy<Variant>ApkToBuilds task.
+# Ignored by default: each build is ~12MB, and committing one per build would
+# bloat history permanently (git keeps every version forever, even overwritten
+# ones). To share builds through the repo instead, delete the line below.
+/builds/*.apk
