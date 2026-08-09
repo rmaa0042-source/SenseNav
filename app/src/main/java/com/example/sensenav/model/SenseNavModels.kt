@@ -117,6 +117,96 @@ data class RouteResult(
     val routes: List<ScoredRoute>
 )
 
+/**
+ * The sensory bands the user set for themselves, and how far out to look for
+ * landmarks.
+ *
+ * The two bounds are pedestrian counts, the one sensory quantity the API
+ * actually measures, and they default to the same cut-offs the scoring service
+ * applies server-side. An untouched filter therefore bands every route exactly
+ * as the backend already did - only a deliberate change moves one.
+ *
+ * Two bounds rather than three: three independent values could be set to
+ * contradict each other (a "high" below the "low"), and the third band is
+ * simply everything above [mediumMaxPedestrians].
+ */
+data class SensoryFilter(
+    val lowMaxPedestrians: Int = DEFAULT_LOW_MAX,
+    val mediumMaxPedestrians: Int = DEFAULT_MEDIUM_MAX,
+    val radiusKm: Int = DEFAULT_RADIUS_KM
+) {
+
+    /**
+     * The band [avgPedestrianCount] falls into. A route with no sensor reading
+     * stays [Sensitivity.Unknown]: there is nothing to compare it against, and
+     * a threshold cannot manufacture a rating the data never carried.
+     */
+    fun classify(avgPedestrianCount: Double?): Sensitivity = when {
+        avgPedestrianCount == null -> Sensitivity.Unknown
+        avgPedestrianCount < lowMaxPedestrians -> Sensitivity.Low
+        avgPedestrianCount < mediumMaxPedestrians -> Sensitivity.Medium
+        else -> Sensitivity.High
+    }
+
+    /**
+     * Keeps the bands ordered and in range however they were arrived at - a
+     * slider drag, or a value written by an older build.
+     */
+    fun normalised(): SensoryFilter {
+        val low = lowMaxPedestrians.coerceIn(PEDESTRIAN_STEP, MAX_LOW_PEDESTRIANS)
+        return SensoryFilter(
+            lowMaxPedestrians = low,
+            mediumMaxPedestrians = mediumMaxPedestrians
+                .coerceIn(low + PEDESTRIAN_STEP, MAX_PEDESTRIANS),
+            radiusKm = radiusKm.coerceIn(MIN_RADIUS_KM, MAX_RADIUS_KM)
+        )
+    }
+
+    companion object {
+        // Mirrors score_route() in the API: under 30 Low, under 100 Medium,
+        // otherwise High. Changing these changes what an unconfigured user sees.
+        const val DEFAULT_LOW_MAX = 30
+        const val DEFAULT_MEDIUM_MAX = 100
+
+        const val DEFAULT_RADIUS_KM = 10
+        const val MIN_RADIUS_KM = 1
+        const val MAX_RADIUS_KM = 30
+
+        /** Well past the busiest sensor readings in the dataset. */
+        const val MAX_PEDESTRIANS = 500
+        const val PEDESTRIAN_STEP = 5
+
+        /**
+         * The Low bound stops halfway up. Past that it stops meaning "quiet",
+         * and it keeps a workable span left for the Medium band above it - a
+         * Low pinned just under the ceiling would leave Medium a single step
+         * wide, which is not a range anyone can aim at on a slider.
+         */
+        const val MAX_LOW_PEDESTRIANS = MAX_PEDESTRIANS / 2
+    }
+}
+
+/**
+ * Re-bands the scored routes against the user's own thresholds.
+ *
+ * The API's colour is dropped from any route this rebands: that colour encodes
+ * the server's band, so keeping it would paint a route labelled Low in the
+ * colour of a High one. Routes that came back with no sensor reading pass
+ * through untouched, since there is no count to re-band them on.
+ */
+fun RouteResult.withThresholds(filter: SensoryFilter): RouteResult = copy(
+    routes = routes.map { route ->
+        if (route.avgPedestrianCount == null) {
+            route
+        } else {
+            route.copy(
+                sensitivity = filter.classify(route.avgPedestrianCount),
+                colorHex = null
+            )
+        }
+    }
+)
+
 data class WarningInfo(
     val id: String,
     val title: String,

@@ -37,6 +37,8 @@ import androidx.compose.material3.NavigationBar
 import androidx.compose.material3.NavigationBarItem
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Scaffold
+import androidx.compose.material3.Slider
+import androidx.compose.material3.SliderDefaults
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
@@ -78,6 +80,7 @@ import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalFocusManager
 import androidx.compose.ui.platform.LocalSoftwareKeyboardController
 import androidx.compose.ui.text.input.ImeAction
+import com.example.sensenav.data.FilterStore
 import com.example.sensenav.data.HistoryStore
 import com.example.sensenav.data.LandmarkRepository
 import com.example.sensenav.data.LocationProvider
@@ -95,6 +98,8 @@ import com.example.sensenav.model.ScoredRoute
 import com.example.sensenav.model.SearchResult
 import com.example.sensenav.model.SearchResultType
 import com.example.sensenav.model.Sensitivity
+import com.example.sensenav.model.SensoryFilter
+import com.example.sensenav.model.withThresholds
 import com.example.sensenav.data.WikimediaImageRepository
 import com.example.sensenav.ui.refuge.LocalRefugeImages
 import com.example.sensenav.ui.refuge.RefugeImage
@@ -234,6 +239,12 @@ fun SenseNavApp() {
     var savedRoutes by remember { mutableStateOf(savedRouteStore.saved()) }
     val locationProvider = remember(context) { LocationProvider(context) }
     val placeGeocoder = remember(context) { PlaceGeocoder(context) }
+    // Held at the top because the radius decides what gets fetched and the
+    // thresholds decide how every route is banded, so both outlive the map
+    // screen the filter is opened from.
+    val filterStore = remember(context) { FilterStore(context) }
+    var sensoryFilter by remember { mutableStateOf(filterStore.filter()) }
+    var editingFilter by remember { mutableStateOf(false) }
 
     var displayName by remember { mutableStateOf(profileStore.displayName()) }
     // Null means "follow the device". A pinned place overrides it everywhere,
@@ -288,7 +299,7 @@ fun SenseNavApp() {
     // returns nothing, so the older refuge endpoint and then the local catalogue
     // stand in rather than leaving the home screen empty. Re-runs when the pin
     // changes or permission is granted, so neither leaves the list stale.
-    LaunchedEffect(hasLocationPermission, savedPlace, locationRefresh) {
+    LaunchedEffect(hasLocationPermission, savedPlace, locationRefresh, sensoryFilter.radiusKm) {
         val pinned = savedPlace
         val near = if (pinned != null) {
             locationLabel = pinned.label
@@ -310,7 +321,10 @@ fun SenseNavApp() {
         Log.i(TAG, "Loading refuges near ${near.latitude},${near.longitude} (from $anchorSource)")
 
         val nearby = try {
-            landmarkRepository.getLowSensoryRefuges(near)
+            landmarkRepository.getLowSensoryRefuges(
+                near = near,
+                radiusKm = sensoryFilter.radiusKm.toDouble()
+            )
         } catch (cancellation: CancellationException) {
             throw cancellation
         } catch (e: Exception) {
@@ -402,6 +416,7 @@ fun SenseNavApp() {
                 initialRefuge = destination,
                 onBack = goBack,
                 onSearch = { navigateTo(AppScreen.Search) },
+                onFilter = { editingFilter = true },
                 onNavigate = { refuge ->
                     openRefuge(refuge)
                     navigateTo(AppScreen.Routes)
@@ -442,6 +457,7 @@ fun SenseNavApp() {
                 onToggleSavedRoute = { savedRoutes = savedRouteStore.toggle(it) },
                 initialOrigin = startPoint,
                 initialDestination = endPoint.ifBlank { destination.name },
+                sensoryFilter = sensoryFilter,
                 onBack = goBack,
                 onWarning = { navigateTo(AppScreen.Warning) },
                 onNavigate = { navigateTo(AppScreen.NearbyMap) },
@@ -452,6 +468,17 @@ fun SenseNavApp() {
                 routes = loadedRoutes,
                 onBack = goBack,
                 onReroute = { navigateTo(AppScreen.Routes) }
+            )
+        }
+
+        if (editingFilter) {
+            SensoryFilterDialog(
+                initialFilter = sensoryFilter,
+                onDismiss = { editingFilter = false },
+                onSave = { chosen ->
+                    sensoryFilter = filterStore.save(chosen)
+                    editingFilter = false
+                }
             )
         }
 
@@ -701,6 +728,7 @@ private fun NearbyMapScreen(
     initialRefuge: Refuge,
     onBack: () -> Unit,
     onSearch: () -> Unit,
+    onFilter: () -> Unit,
     onNavigate: (Refuge) -> Unit,
     onWarning: () -> Unit
 ) {
@@ -749,7 +777,7 @@ private fun NearbyMapScreen(
                 fontSize = 18.sp,
                 fontWeight = FontWeight.Bold
             )
-            SmallRoundButton("Filter", onSearch)
+            SmallRoundButton("Filter", onFilter)
         }
 
         SearchPill(
@@ -1039,6 +1067,7 @@ private fun RouteOptionsScreen(
     onToggleSavedRoute: (SavedRoute) -> Unit,
     initialOrigin: String,
     initialDestination: String,
+    sensoryFilter: SensoryFilter,
     onBack: () -> Unit,
     onWarning: () -> Unit,
     onNavigate: () -> Unit,
@@ -1082,7 +1111,14 @@ private fun RouteOptionsScreen(
         zoom = 14.2f
     )
 
-    LaunchedEffect(destination.id, submittedOrigin, submittedDestination, retryCount, pinnedOrigin) {
+    LaunchedEffect(
+        destination.id,
+        submittedOrigin,
+        submittedDestination,
+        retryCount,
+        pinnedOrigin,
+        sensoryFilter
+    ) {
         state = RoutesUiState.Loading
         state = try {
             // "My location" is a marker the user picked from the suggestions, not
@@ -1115,7 +1151,11 @@ private fun RouteOptionsScreen(
                     ?: throw PlaceNotFoundException(destinationQuery)
             }
 
+            // Banded against the user's own thresholds rather than the server's.
+            // The repository caches by trip, so re-running this for a changed
+            // filter re-bands the routes without another network call.
             val result = routeRepository.getRoutes(origin, target)
+                .withThresholds(sensoryFilter)
             onRoutesLoaded(result.routes)
             RoutesUiState.Loaded(origin, target, result)
         } catch (cancellation: CancellationException) {
@@ -1675,6 +1715,149 @@ private fun WarningScreen(
                 }
             }
         }
+    }
+}
+
+/**
+ * Lets the user set the pedestrian counts that divide Low, Medium and High for
+ * them, and how far out landmarks are searched for.
+ *
+ * The bands are edited as two upper bounds rather than three free values: the
+ * High band is whatever is left above the Medium one, so it is shown as a
+ * derived read-out instead of a control that could be dragged into
+ * contradicting the other two.
+ */
+@Composable
+private fun SensoryFilterDialog(
+    initialFilter: SensoryFilter,
+    onDismiss: () -> Unit,
+    onSave: (SensoryFilter) -> Unit
+) {
+    var draft by remember(initialFilter) { mutableStateOf(initialFilter) }
+
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text("Filter") },
+        text = {
+            Column(modifier = Modifier.verticalScroll(rememberScrollState())) {
+                Text(
+                    text = "Sensory overload thresholds",
+                    color = SenseInk,
+                    fontSize = 15.sp,
+                    fontWeight = FontWeight.Bold
+                )
+                Spacer(modifier = Modifier.height(2.dp))
+                Text(
+                    text = "Measured in people per minute on nearby footpath sensors. " +
+                        "Routes are rated against these numbers.",
+                    color = SenseMuted,
+                    fontSize = 12.sp
+                )
+                Spacer(modifier = Modifier.height(12.dp))
+
+                ThresholdSlider(
+                    label = "Low",
+                    valueLabel = "under ${draft.lowMaxPedestrians}",
+                    value = draft.lowMaxPedestrians,
+                    // Stops halfway, leaving the Medium band a span wide enough
+                    // to actually aim at.
+                    range = SensoryFilter.PEDESTRIAN_STEP..SensoryFilter.MAX_LOW_PEDESTRIANS,
+                    tint = SenseRiskLow,
+                    // Pushes Medium up rather than blocking the drag, so the
+                    // slider never silently refuses to move.
+                    onChange = { draft = draft.copy(lowMaxPedestrians = it).normalised() }
+                )
+                Spacer(modifier = Modifier.height(10.dp))
+
+                ThresholdSlider(
+                    label = "Medium",
+                    valueLabel = "${draft.lowMaxPedestrians} to ${draft.mediumMaxPedestrians}",
+                    value = draft.mediumMaxPedestrians,
+                    range = (draft.lowMaxPedestrians + SensoryFilter.PEDESTRIAN_STEP)..
+                        SensoryFilter.MAX_PEDESTRIANS,
+                    tint = SenseRiskMedium,
+                    onChange = { draft = draft.copy(mediumMaxPedestrians = it).normalised() }
+                )
+                Spacer(modifier = Modifier.height(10.dp))
+
+                // Not a control: the top band is defined by where Medium ends.
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Box(
+                        modifier = Modifier
+                            .size(10.dp)
+                            .background(SenseRiskHigh, CircleShape)
+                    )
+                    Spacer(modifier = Modifier.width(8.dp))
+                    Text("High", color = SenseInk, fontSize = 14.sp)
+                    Spacer(modifier = Modifier.weight(1f))
+                    Text(
+                        text = "${draft.mediumMaxPedestrians} and above",
+                        color = SenseMuted,
+                        fontSize = 13.sp
+                    )
+                }
+
+                Spacer(modifier = Modifier.height(18.dp))
+                Text(
+                    text = "Search distance",
+                    color = SenseInk,
+                    fontSize = 15.sp,
+                    fontWeight = FontWeight.Bold
+                )
+                Spacer(modifier = Modifier.height(2.dp))
+                Text(
+                    text = "How far around your location landmarks are looked for.",
+                    color = SenseMuted,
+                    fontSize = 12.sp
+                )
+                Spacer(modifier = Modifier.height(8.dp))
+                ThresholdSlider(
+                    label = "Distance",
+                    valueLabel = "${draft.radiusKm} km",
+                    value = draft.radiusKm,
+                    range = SensoryFilter.MIN_RADIUS_KM..SensoryFilter.MAX_RADIUS_KM,
+                    tint = SenseBlue,
+                    onChange = { draft = draft.copy(radiusKm = it) }
+                )
+            }
+        },
+        confirmButton = { TextButton(onClick = { onSave(draft) }) { Text("Apply") } },
+        dismissButton = {
+            Row {
+                TextButton(onClick = { draft = SensoryFilter() }) { Text("Reset") }
+                TextButton(onClick = onDismiss) { Text("Cancel") }
+            }
+        }
+    )
+}
+
+/** One labelled row: name on the left, current value on the right, slider under. */
+@Composable
+private fun ThresholdSlider(
+    label: String,
+    valueLabel: String,
+    value: Int,
+    range: IntRange,
+    tint: Color,
+    onChange: (Int) -> Unit
+) {
+    Column {
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            Box(modifier = Modifier.size(10.dp).background(tint, CircleShape))
+            Spacer(modifier = Modifier.width(8.dp))
+            Text(label, color = SenseInk, fontSize = 14.sp)
+            Spacer(modifier = Modifier.weight(1f))
+            Text(valueLabel, color = SenseMuted, fontSize = 13.sp)
+        }
+        Slider(
+            value = value.toFloat(),
+            onValueChange = { onChange(it.roundToInt()) },
+            valueRange = range.first.toFloat()..range.last.toFloat(),
+            colors = SliderDefaults.colors(
+                thumbColor = tint,
+                activeTrackColor = tint
+            )
+        )
     }
 }
 
