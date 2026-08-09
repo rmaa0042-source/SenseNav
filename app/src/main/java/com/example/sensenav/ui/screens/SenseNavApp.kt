@@ -214,6 +214,10 @@ fun SenseNavApp() {
     var savedPlace by remember { mutableStateOf(profileStore.savedPlace()) }
     var editingName by remember { mutableStateOf(false) }
     var editingLocation by remember { mutableStateOf(false) }
+    // Bumped whenever the user explicitly asks for their own location. Without
+    // it, a lookup that came back empty - indoors, no fix yet - leaves the
+    // header reading "Location unavailable" with nothing that retries it.
+    var locationRefresh by remember { mutableStateOf(0) }
     var recentSearches by remember { mutableStateOf(historyStore.recentSearches()) }
     var recentlyViewed by remember { mutableStateOf(historyStore.recentlyViewed()) }
 
@@ -257,7 +261,7 @@ fun SenseNavApp() {
     // returns nothing, so the older refuge endpoint and then the local catalogue
     // stand in rather than leaving the home screen empty. Re-runs when the pin
     // changes or permission is granted, so neither leaves the list stale.
-    LaunchedEffect(hasLocationPermission, savedPlace) {
+    LaunchedEffect(hasLocationPermission, savedPlace, locationRefresh) {
         val pinned = savedPlace
         val near = if (pinned != null) {
             locationLabel = pinned.label
@@ -440,6 +444,8 @@ fun SenseNavApp() {
                 onUseDeviceLocation = {
                     profileStore.clearPlace()
                     savedPlace = null
+                    permissionRequested = false
+                    locationRefresh++
                     editingLocation = false
                 },
                 onSave = { place ->
@@ -795,7 +801,9 @@ private fun SearchScreen(
     }
 
     LaunchedEffect(submittedQuery) {
-        if (submittedQuery.isBlank()) {
+        // "My location" is a chosen marker, not a place to look up, so it leaves
+        // the list on the history rather than reporting no matches for itself.
+        if (submittedQuery.isBlank() || submittedQuery.isMyLocation()) {
             backendSearchResults = emptyList()
             searching = false
         } else {
@@ -817,7 +825,7 @@ private fun SearchScreen(
         }
     }
 
-    val showingHistory = submittedQuery.isBlank()
+    val showingHistory = submittedQuery.isBlank() || submittedQuery.isMyLocation()
     val shown = if (showingHistory) recentSearches else backendSearchResults
 
     Column(
@@ -857,15 +865,19 @@ private fun SearchScreen(
             onRoute = {
                 keyboard?.hide()
                 val typed = query.trim()
-                onSearchRecorded(
-                    SearchResult(
-                        id = "typed_${typed.lowercase()}",
-                        title = typed,
-                        subtitle = "Searched destination",
-                        type = SearchResultType.Route,
-                        sensoryLabel = ""
+                // The marker is not a place someone searched for, so it stays out
+                // of the history list.
+                if (!typed.isMyLocation()) {
+                    onSearchRecorded(
+                        SearchResult(
+                            id = "typed_${typed.lowercase()}",
+                            title = typed,
+                            subtitle = "Searched destination",
+                            type = SearchResultType.Route,
+                            sensoryLabel = ""
+                        )
                     )
-                )
+                }
                 onRoute(typed)
             }
         )
@@ -956,25 +968,33 @@ private fun RouteOptionsScreen(
     LaunchedEffect(destination.id, submittedOrigin, submittedDestination, retryCount, pinnedOrigin) {
         state = RoutesUiState.Loading
         state = try {
-            val origin = if (submittedOrigin.isBlank()) {
-                // A location pinned on the home screen wins: it is what the user
-                // is being shown refuges around, so routing from anywhere else
-                // would contradict the list they picked from. Otherwise the real
-                // device position, with the CBD fallback keeping the screen
-                // usable on an emulator or with location denied.
-                pinnedOrigin ?: locationProvider.currentLocation() ?: defaultOrigin
+            // "My location" is a marker the user picked from the suggestions, not
+            // a place name - sending it to the geocoder would just fail. A blank
+            // box has always meant the same thing, so both resolve here.
+            //
+            // The device position comes first. The suggestion says "use where you
+            // are now", and a pinned location is a place the user chose to browse
+            // around, not a claim about where they are standing - routing from it
+            // would send them walking from somewhere they are not. The pin only
+            // stands in when there is no fix to be had.
+            suspend fun whereTheUserIs(): GeoPoint =
+                locationProvider.currentLocation() ?: pinnedOrigin ?: defaultOrigin
+
+            val origin = if (submittedOrigin.isBlank() || submittedOrigin.isMyLocation()) {
+                whereTheUserIs()
             } else {
                 placeGeocoder.resolve(submittedOrigin)
                     ?: throw PlaceNotFoundException(submittedOrigin)
             }
 
             val destinationQuery = submittedDestination.ifBlank { destination.name }
-            val target = if (destinationQuery.equals(destination.name, ignoreCase = true)) {
+            val target = when {
+                destinationQuery.isMyLocation() -> whereTheUserIs()
                 // Unedited: use the refuge's own coordinates rather than
                 // round-tripping its name through the geocoder.
-                destination.toGeoPoint()
-            } else {
-                placeGeocoder.resolve(destinationQuery)
+                destinationQuery.equals(destination.name, ignoreCase = true) ->
+                    destination.toGeoPoint()
+                else -> placeGeocoder.resolve(destinationQuery)
                     ?: throw PlaceNotFoundException(destinationQuery)
             }
 
@@ -1234,36 +1254,49 @@ private fun PlaceField(
 ) {
     val focusManager = LocalFocusManager.current
 
-    Row(verticalAlignment = Alignment.CenterVertically) {
-        Box(
-            modifier = Modifier.width(MarkerColumnWidth),
-            contentAlignment = Alignment.Center
-        ) {
-            marker()
-        }
-        Spacer(modifier = Modifier.width(6.dp))
-        OutlinedTextField(
-            value = value,
-            onValueChange = onValueChange,
-            modifier = Modifier.weight(1f).then(modifier),
-            placeholder = { Text(placeholder, fontSize = 14.sp) },
-            singleLine = true,
-            shape = RoundedCornerShape(12.dp),
-            colors = senseTextFieldColors(),
-            keyboardOptions = KeyboardOptions(imeAction = imeAction),
-            keyboardActions = KeyboardActions(
-                // "Next" moves From -> To; only "Search" fires the request.
-                onNext = { focusManager.moveFocus(FocusDirection.Down) },
-                onSearch = { onSubmit() }
-            ),
-            trailingIcon = {
-                if (value.isNotBlank()) {
-                    TextButton(onClick = { onValueChange("") }) {
-                        Text("Clear", color = SenseMuted, fontSize = 11.sp)
+    // Every place box in the app is one of these, so offering the suggestion
+    // here is what puts it on the search page and the route planner alike.
+    Column {
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            Box(
+                modifier = Modifier.width(MarkerColumnWidth),
+                contentAlignment = Alignment.Center
+            ) {
+                marker()
+            }
+            Spacer(modifier = Modifier.width(6.dp))
+            OutlinedTextField(
+                value = value,
+                onValueChange = onValueChange,
+                modifier = Modifier.weight(1f).then(modifier),
+                placeholder = { Text(placeholder, fontSize = 14.sp) },
+                singleLine = true,
+                shape = RoundedCornerShape(12.dp),
+                colors = senseTextFieldColors(),
+                keyboardOptions = KeyboardOptions(imeAction = imeAction),
+                keyboardActions = KeyboardActions(
+                    // "Next" moves From -> To; only "Search" fires the request.
+                    onNext = { focusManager.moveFocus(FocusDirection.Down) },
+                    onSearch = { onSubmit() }
+                ),
+                trailingIcon = {
+                    if (value.isNotBlank()) {
+                        TextButton(onClick = { onValueChange("") }) {
+                            Text("Clear", color = SenseMuted, fontSize = 11.sp)
+                        }
                     }
                 }
-            }
-        )
+            )
+        }
+
+        if (matchesMyLocation(value)) {
+            MyLocationSuggestion(
+                onClick = {
+                    onValueChange(MY_LOCATION_LABEL)
+                    focusManager.clearFocus()
+                }
+            )
+        }
     }
 }
 
@@ -1484,11 +1517,18 @@ private fun EditLocationDialog(
                     Spacer(modifier = Modifier.height(6.dp))
                     Text(it, color = SensePink, fontSize = 12.sp, lineHeight = 16.sp)
                 }
-                if (isPinned) {
-                    Spacer(modifier = Modifier.height(4.dp))
-                    TextButton(onClick = onUseDeviceLocation) {
-                        Text("Use my device location instead", fontSize = 13.sp)
-                    }
+                // Always offered, not just when pinned: unpinned it is the retry
+                // for a lookup that came back empty, which is otherwise a dead end.
+                Spacer(modifier = Modifier.height(4.dp))
+                TextButton(onClick = onUseDeviceLocation) {
+                    Text(
+                        text = if (isPinned) {
+                            "Use my device location instead"
+                        } else {
+                            "Find my location again"
+                        },
+                        fontSize = 13.sp
+                    )
                 }
             }
         },
@@ -1634,6 +1674,68 @@ private fun RefugeListItem(
         }
     }
 }
+
+/**
+ * Autocomplete row offered beneath a place field while the user is typing
+ * towards their own location. Tapping it fills the field with
+ * [MY_LOCATION_LABEL], which the routing screen resolves to a real position
+ * rather than sending to the geocoder.
+ */
+@Composable
+private fun MyLocationSuggestion(onClick: () -> Unit) {
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            // Indented to sit under the text field rather than the marker column.
+            .padding(start = MarkerColumnWidth + 6.dp)
+            .clip(RoundedCornerShape(10.dp))
+            .clickable(onClick = onClick)
+            .padding(vertical = 8.dp, horizontal = 8.dp),
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        Box(
+            modifier = Modifier.size(26.dp).clip(CircleShape).background(SenseSoftBlue),
+            contentAlignment = Alignment.Center
+        ) {
+            Text("Pin", color = SenseBlue, fontSize = 9.sp, fontWeight = FontWeight.Bold)
+        }
+        Spacer(modifier = Modifier.width(10.dp))
+        Column(modifier = Modifier.weight(1f)) {
+            Text(
+                text = MY_LOCATION_LABEL,
+                color = SenseInk,
+                fontSize = 14.sp,
+                fontWeight = FontWeight.Bold
+            )
+            Text("Use where you are now", color = SenseMuted, fontSize = 11.sp)
+        }
+    }
+}
+
+/**
+ * What a place field holds when it means "wherever I am". Kept as a sentinel
+ * rather than a blank field so the choice is visible in the box, and resolved
+ * to coordinates at routing time instead of being geocoded as text.
+ */
+private const val MY_LOCATION_LABEL = "My location"
+
+private fun String.isMyLocation(): Boolean = trim().equals(MY_LOCATION_LABEL, ignoreCase = true)
+
+/**
+ * Whether partly-typed text is reaching for the user's own location, so "loc",
+ * "my loc", "current" or "gps" all surface the suggestion.
+ */
+private fun matchesMyLocation(query: String): Boolean {
+    val typed = query.trim().lowercase()
+    if (typed.length < 2) return false
+    if (typed == MY_LOCATION_LABEL.lowercase()) return false
+    return MY_LOCATION_TERMS.any { it.contains(typed) || typed.contains(it) }
+}
+
+private val MY_LOCATION_TERMS = listOf(
+    "my location", "current location", "my current location",
+    "my position", "where i am", "gps", "here", "me"
+)
 
 @Composable
 private fun SearchResultRow(result: SearchResult, onClick: () -> Unit) {
