@@ -15,6 +15,7 @@ playServicesLocation = "21.3.0"
 mapsUtils = "3.8.2"
 coroutines = "1.8.1"
 gson = "2.11.0"
+coil = "2.7.0"
 
 [libraries]
 androidx-core-ktx = { group = "androidx.core", name = "core-ktx", version.ref = "coreKtx" }
@@ -39,6 +40,7 @@ play-services-location = { group = "com.google.android.gms", name = "play-servic
 android-maps-utils = { group = "com.google.maps.android", name = "android-maps-utils", version.ref = "mapsUtils" }
 kotlinx-coroutines-play-services = { group = "org.jetbrains.kotlinx", name = "kotlinx-coroutines-play-services", version.ref = "coroutines" }
 gson = { group = "com.google.code.gson", name = "gson", version.ref = "gson" }
+coil-compose = { group = "io.coil-kt", name = "coil-compose", version.ref = "coil" }
 
 [plugins]
 android-application = { id = "com.android.application", version.ref = "agp" }

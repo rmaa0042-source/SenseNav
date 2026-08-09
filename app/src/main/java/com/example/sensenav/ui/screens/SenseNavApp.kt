@@ -37,6 +37,7 @@ import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -81,6 +82,10 @@ import com.example.sensenav.model.ScoredRoute
 import com.example.sensenav.model.SearchResult
 import com.example.sensenav.model.SearchResultType
 import com.example.sensenav.model.Sensitivity
+import com.example.sensenav.data.WikimediaImageRepository
+import com.example.sensenav.ui.refuge.LocalRefugeImages
+import com.example.sensenav.ui.refuge.RefugeImage
+import com.example.sensenav.ui.refuge.rememberRefugeImage
 import com.example.sensenav.ui.map.MapRoute
 import com.example.sensenav.ui.map.SenseNavMap
 import com.example.sensenav.ui.map.rememberSenseNavCameraState
@@ -187,6 +192,8 @@ fun SenseNavApp() {
     val refugeRepository = remember { RefugeRepository() }
     val landmarkRepository = remember { LandmarkRepository() }
     val searchRepository = remember { SearchRepository() }
+    // Held at the top so its lookup cache is shared by every screen.
+    val refugeImages = remember { WikimediaImageRepository() }
 
     // History is device-local, so it is read straight from disk at start-up
     // rather than fetched, and mirrored here so the screens recompose on change.
@@ -320,6 +327,7 @@ fun SenseNavApp() {
     }
 
     MaterialTheme {
+      CompositionLocalProvider(LocalRefugeImages provides refugeImages) {
         when (screen) {
             AppScreen.Splash -> SplashScreen(onFinished = { screen = AppScreen.Home })
             AppScreen.Home -> HomeScreen(
@@ -385,6 +393,7 @@ fun SenseNavApp() {
                 onReroute = { screen = AppScreen.Routes }
             )
         }
+      }
     }
 }
 
@@ -540,7 +549,9 @@ private fun HomeScreen(
                     // user the closest of these can still be a long way off. Each
                     // row carries its own distance.
                     text = "Calm-rated places, closest to you first. The rating is " +
-                        "estimated from each place's category, not from live sensor readings.",
+                        "estimated from each place's category, not from live sensor " +
+                        "readings. Photos from Wikimedia Commons; places without one " +
+                        "show an illustration.",
                     color = SenseMuted,
                     fontSize = 12.sp,
                     lineHeight = 16.sp
@@ -648,7 +659,7 @@ private fun NearbyMapScreen(
             elevation = CardDefaults.cardElevation(defaultElevation = 8.dp)
         ) {
             Column(modifier = Modifier.padding(16.dp)) {
-                RefugeListItem(refuge = selectedRefuge, onClick = {})
+                RefugeListItem(refuge = selectedRefuge, onClick = {}, showCredit = true)
                 Spacer(modifier = Modifier.height(12.dp))
                 Row {
                     Button(
@@ -1328,6 +1339,8 @@ private fun SectionHeader(title: String, action: String?, onAction: (() -> Unit)
 
 @Composable
 private fun RefugePhotoCard(refuge: Refuge, onClick: () -> Unit) {
+    val image = rememberRefugeImage(refuge)
+
     Box(
         modifier = Modifier
             .width(150.dp)
@@ -1335,7 +1348,7 @@ private fun RefugePhotoCard(refuge: Refuge, onClick: () -> Unit) {
             .clip(RoundedCornerShape(14.dp))
             .clickable(onClick = onClick)
     ) {
-        ImageBlock(refuge.imageLabel, Modifier.fillMaxSize())
+        RefugeImage(refuge = refuge, image = image, modifier = Modifier.fillMaxSize())
         Box(
             modifier = Modifier
                 .fillMaxSize()
@@ -1357,12 +1370,30 @@ private fun RefugePhotoCard(refuge: Refuge, onClick: () -> Unit) {
             refuge.distanceLabel()?.let { distance ->
                 Text(distance, color = Color.White.copy(alpha = 0.85f), fontSize = 11.sp)
             }
+            // The CC licences these photos carry require the credit to travel
+            // with the image, so it sits on the card rather than in a settings
+            // screen nobody opens.
+            image?.let {
+                Text(
+                    text = it.credit,
+                    color = Color.White.copy(alpha = 0.7f),
+                    fontSize = 9.sp,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis
+                )
+            }
         }
     }
 }
 
 @Composable
-private fun RefugeListItem(refuge: Refuge, onClick: () -> Unit) {
+private fun RefugeListItem(
+    refuge: Refuge,
+    onClick: () -> Unit,
+    showCredit: Boolean = false
+) {
+    val image = rememberRefugeImage(refuge)
+
     Row(
         modifier = Modifier
             .fillMaxWidth()
@@ -1370,8 +1401,9 @@ private fun RefugeListItem(refuge: Refuge, onClick: () -> Unit) {
             .padding(vertical = 8.dp),
         verticalAlignment = Alignment.CenterVertically
     ) {
-        ImageBlock(
-            label = refuge.imageLabel,
+        RefugeImage(
+            refuge = refuge,
+            image = image,
             modifier = Modifier.size(66.dp).clip(RoundedCornerShape(12.dp))
         )
         Spacer(modifier = Modifier.width(12.dp))
@@ -1395,6 +1427,17 @@ private fun RefugeListItem(refuge: Refuge, onClick: () -> Unit) {
             }
             Text(refuge.subtitle, color = SenseMuted, fontSize = 12.sp)
             Text(refuge.sensoryTag, color = SenseBlue, fontSize = 14.sp, fontWeight = FontWeight.Bold)
+            // Only where there is room for it - the list rows are covered by the
+            // blanket Wikimedia credit under the section heading instead.
+            if (showCredit && image != null) {
+                Text(
+                    text = "Photo: ${image.credit}",
+                    color = SenseMuted,
+                    fontSize = 10.sp,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis
+                )
+            }
         }
     }
 }
@@ -1478,16 +1521,6 @@ private fun RouteCard(route: ScoredRoute, isRecommended: Boolean, onDirections: 
                 Text("Save")
             }
         }
-    }
-}
-
-@Composable
-private fun ImageBlock(label: String, modifier: Modifier) {
-    Box(
-        modifier = modifier.background(Brush.linearGradient(listOf(Color(0xFFB9D3F5), Color(0xFF7A94C5), Color(0xFF365486)))),
-        contentAlignment = Alignment.Center
-    ) {
-        Text(label, color = Color.White, fontWeight = FontWeight.Bold, fontSize = 13.sp)
     }
 }
 

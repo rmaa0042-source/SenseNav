@@ -30,6 +30,24 @@ data class Refuge(
     val isSaved: Boolean = false
 )
 
+/**
+ * A freely-licensed photograph of a refuge, sourced from Wikimedia.
+ *
+ * [artist] and [license] are carried alongside the URL because the CC licences
+ * these images use require credit wherever the photo is shown - a bare URL is
+ * not enough to display one lawfully.
+ */
+data class LandmarkImage(
+    val url: String,
+    val artist: String?,
+    val license: String?,
+    val descriptionUrl: String?
+) {
+    /** Short credit line, e.g. "Medelam / CC BY-SA 4.0". */
+    val credit: String
+        get() = listOfNotNull(artist, license).joinToString(" / ").ifBlank { "Wikimedia Commons" }
+}
+
 /** Sensory load of a route, as classified by the scoring API. */
 enum class Sensitivity(val rank: Int) {
     Low(0),
