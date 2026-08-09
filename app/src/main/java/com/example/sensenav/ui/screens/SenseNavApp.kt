@@ -213,6 +213,10 @@ fun SenseNavApp() {
     val context = LocalContext.current
     val historyStore = remember(context) { HistoryStore(context) }
     val profileStore = remember(context) { ProfileStore(context) }
+    // Held here rather than on the routes screen so saving a route on one screen
+    // is visible on the other without either owning the data.
+    val savedRouteStore = remember(context) { SavedRouteStore(context) }
+    var savedRoutes by remember { mutableStateOf(savedRouteStore.saved()) }
     val locationProvider = remember(context) { LocationProvider(context) }
     val placeGeocoder = remember(context) { PlaceGeocoder(context) }
 
@@ -400,8 +404,10 @@ fun SenseNavApp() {
                 onSearchRecorded = { result ->
                     recentSearches = historyStore.recordSearch(result)
                 },
+                savedRoutes = savedRoutes,
                 onClearSearches = { recentSearches = historyStore.clearSearches() },
                 onClearViewed = { recentlyViewed = historyStore.clearViewed() },
+                onClearSavedRoutes = { savedRoutes = savedRouteStore.clear() },
                 onBack = { screen = AppScreen.Home },
                 onRoute = { typedDestination ->
                     endPoint = typedDestination
@@ -417,6 +423,8 @@ fun SenseNavApp() {
                 destination = destination,
                 pinnedOrigin = savedPlace?.let { GeoPoint(it.latitude, it.longitude) },
                 defaultOrigin = repository.defaultOrigin,
+                savedRoutes = savedRoutes,
+                onToggleSavedRoute = { savedRoutes = savedRouteStore.toggle(it) },
                 initialOrigin = startPoint,
                 initialDestination = endPoint.ifBlank { destination.name },
                 onBack = { screen = AppScreen.NearbyMap },
@@ -778,9 +786,11 @@ private fun SearchScreen(
     onOriginChange: (String) -> Unit,
     recentSearches: List<SearchResult>,
     recentlyViewed: List<Refuge>,
+    savedRoutes: List<SavedRoute>,
     onSearchRecorded: (SearchResult) -> Unit,
     onClearSearches: () -> Unit,
     onClearViewed: () -> Unit,
+    onClearSavedRoutes: () -> Unit,
     onBack: () -> Unit,
     onRoute: (String) -> Unit,
     onRefugeSelected: (Refuge) -> Unit,
@@ -934,6 +944,74 @@ private fun SearchScreen(
         recentlyViewed.forEach { refuge ->
             RefugeListItem(refuge = refuge, onClick = { onRefugeSelected(refuge) })
         }
+
+        // Absent entirely until something has been saved - an empty section here
+        // would just be a heading explaining its own emptiness.
+        if (savedRoutes.isNotEmpty()) {
+            Spacer(modifier = Modifier.height(18.dp))
+            SectionHeader(
+                title = "Saved Routes",
+                action = "Clear All",
+                onAction = onClearSavedRoutes
+            )
+            Spacer(modifier = Modifier.height(6.dp))
+            savedRoutes.forEach { saved ->
+                SavedRouteRow(saved = saved, onClick = { onRoute(saved.destinationName) })
+            }
+        }
+    }
+}
+
+/**
+ * A kept route on the search page. Re-routes to the same destination rather than
+ * replaying stored geometry: the saved text is a record of a decision, and the
+ * sensor readings behind it will have moved on since.
+ */
+@Composable
+private fun SavedRouteRow(saved: SavedRoute, onClick: () -> Unit) {
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .clickable(onClick = onClick)
+            .padding(vertical = 12.dp),
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        Box(
+            modifier = Modifier.size(34.dp).clip(CircleShape).background(SenseSoftBlue),
+            contentAlignment = Alignment.Center
+        ) {
+            Text("Route", color = SenseBlue, fontSize = 8.sp, fontWeight = FontWeight.Bold)
+        }
+        Spacer(modifier = Modifier.width(12.dp))
+        Column(modifier = Modifier.weight(1f)) {
+            Text(
+                text = saved.destinationName,
+                color = SenseInk,
+                fontSize = 15.sp,
+                fontWeight = FontWeight.Bold,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis
+            )
+            Text(
+                text = listOfNotNull(
+                    saved.summary.takeIf { it.isNotBlank() },
+                    saved.durationText.takeIf { it.isNotBlank() },
+                    saved.distanceText.takeIf { it.isNotBlank() }
+                ).joinToString(" - "),
+                color = SenseMuted,
+                fontSize = 12.sp,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis
+            )
+        }
+        if (saved.sensitivityLabel != "Unrated") {
+            Text(
+                text = saved.sensitivityLabel,
+                color = SenseBlue,
+                fontSize = 12.sp,
+                fontWeight = FontWeight.Bold
+            )
+        }
     }
 }
 
@@ -942,6 +1020,8 @@ private fun RouteOptionsScreen(
     destination: Refuge,
     pinnedOrigin: GeoPoint?,
     defaultOrigin: GeoPoint,
+    savedRoutes: List<SavedRoute>,
+    onToggleSavedRoute: (SavedRoute) -> Unit,
     initialOrigin: String,
     initialDestination: String,
     onBack: () -> Unit,
@@ -977,8 +1057,6 @@ private fun RouteOptionsScreen(
     // already drawn solid, so the screen opens on a coherent choice rather than
     // on nothing being chosen.
     var chosenRouteIndex by remember { mutableStateOf(0) }
-    val savedRouteStore = remember(context) { SavedRouteStore(context) }
-    var savedRoutes by remember { mutableStateOf(savedRouteStore.saved()) }
 
     var panelExpanded by remember { mutableStateOf(true) }
     var panelDrag by remember { mutableStateOf(0f) }
@@ -1218,7 +1296,7 @@ private fun RouteOptionsScreen(
                                         onChoose = { chosenRouteIndex = index },
                                         onShare = { shareRoute(route) },
                                         onToggleSave = {
-                                            savedRoutes = savedRouteStore.toggle(
+                                            onToggleSavedRoute(
                                                 SavedRoute(
                                                     id = key,
                                                     summary = route.summary,

@@ -42,6 +42,11 @@ class SavedRouteStore(context: Context) {
         return updated
     }
 
+    fun clear(): List<SavedRoute> {
+        prefs.edit().remove(KEY_ROUTES).apply()
+        return emptyList()
+    }
+
     private companion object {
         const val PREFS_NAME = "sensenav_saved_routes"
         const val KEY_ROUTES = "routes"
