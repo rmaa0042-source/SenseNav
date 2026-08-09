@@ -59,7 +59,9 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import android.Manifest
+import android.content.Intent
 import android.util.Log
+import androidx.compose.foundation.BorderStroke
 import androidx.activity.compose.BackHandler
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
@@ -82,7 +84,9 @@ import com.example.sensenav.data.MockSenseNavRepository
 import com.example.sensenav.data.PlaceGeocoder
 import com.example.sensenav.data.ProfileStore
 import com.example.sensenav.data.RouteRepository
+import com.example.sensenav.data.SavedRouteStore
 import com.example.sensenav.model.SavedPlace
+import com.example.sensenav.model.SavedRoute
 import com.example.sensenav.model.GeoPoint
 import com.example.sensenav.model.Refuge
 import com.example.sensenav.model.RouteResult
@@ -969,6 +973,13 @@ private fun RouteOptionsScreen(
     // with it, leaving the map to the route. Dragging is not the only way in or
     // out of that state - the handle takes a tap too, since a precise drag is
     // exactly the sort of interaction this app's users may not want to make.
+    // Which route the user picked. Defaults to the quietest, which is the one
+    // already drawn solid, so the screen opens on a coherent choice rather than
+    // on nothing being chosen.
+    var chosenRouteIndex by remember { mutableStateOf(0) }
+    val savedRouteStore = remember(context) { SavedRouteStore(context) }
+    var savedRoutes by remember { mutableStateOf(savedRouteStore.saved()) }
+
     var panelExpanded by remember { mutableStateOf(true) }
     var panelDrag by remember { mutableStateOf(0f) }
     val panelDragThreshold = with(LocalDensity.current) { 24.dp.toPx() }
@@ -1021,6 +1032,39 @@ private fun RouteOptionsScreen(
         }
     }
 
+    // Hands the route to the system share sheet, where the user picks who gets
+    // it - nothing is sent from here. The maps link is built from the resolved
+    // endpoints so the recipient gets a route they can actually open.
+    val shareRoute: (ScoredRoute) -> Unit = { route ->
+        val trip = state as? RoutesUiState.Loaded
+        val body = buildList {
+            add("SenseNav walking route to ${destination.name}")
+            add(
+                listOfNotNull(
+                    route.summary.takeIf { it.isNotBlank() },
+                    route.durationText.takeIf { it.isNotBlank() },
+                    route.distanceText.takeIf { it.isNotBlank() }
+                ).joinToString(" - ")
+            )
+            if (route.isScored) add("${route.sensitivity} sensory load")
+            trip?.let {
+                add(
+                    "https://www.google.com/maps/dir/?api=1" +
+                        "&origin=${it.origin.latitude},${it.origin.longitude}" +
+                        "&destination=${it.destination.latitude},${it.destination.longitude}" +
+                        "&travelmode=walking"
+                )
+            }
+        }.joinToString("\n")
+
+        val send = Intent(Intent.ACTION_SEND).apply {
+            type = "text/plain"
+            putExtra(Intent.EXTRA_SUBJECT, "SenseNav route to ${destination.name}")
+            putExtra(Intent.EXTRA_TEXT, body)
+        }
+        runCatching { context.startActivity(Intent.createChooser(send, "Share route")) }
+    }
+
     val submitPlaces = {
         keyboard?.hide()
         submittedOrigin = originInput.trim()
@@ -1029,6 +1073,12 @@ private fun RouteOptionsScreen(
 
     val loaded = state as? RoutesUiState.Loaded
     val ranked = loaded?.result?.routes?.rankedBySensory().orEmpty()
+
+    // A new set of routes invalidates the old pick.
+    LaunchedEffect(ranked) { chosenRouteIndex = 0 }
+
+    /** Stable across refetches, so a saved route stays saved when routes reload. */
+    fun routeKey(route: ScoredRoute) = "${destination.name}|${route.summary}|${route.distanceText}"
 
     // Frame the whole trip once geometry arrives, and again when the panel
     // collapses - the map just gained the space the panel was using.
@@ -1052,9 +1102,9 @@ private fun RouteOptionsScreen(
         Box(modifier = Modifier.fillMaxWidth().weight(1f)) {
             SenseNavMap(
                 modifier = Modifier.fillMaxSize(),
-                // Quietest route drawn last so it sits on top.
+                // The chosen route is the solid one; the rest are dimmed context.
                 routes = ranked.mapIndexed { index, route ->
-                    route.toMapRoute(isDimmed = index != 0)
+                    route.toMapRoute(isDimmed = index != chosenRouteIndex)
                 },
                 origin = loaded?.origin?.toLatLng(),
                 destination = loaded?.destination?.toLatLng(),
@@ -1159,18 +1209,54 @@ private fun RouteOptionsScreen(
                                     Spacer(modifier = Modifier.height(12.dp))
                                 }
                                 ranked.forEachIndexed { index, route ->
+                                    val key = routeKey(route)
                                     RouteCard(
                                         route = route,
                                         isRecommended = index == 0 && current.result.isScored,
-                                        onDirections = {
-                                            if (route.sensitivity == Sensitivity.High) {
+                                        isChosen = index == chosenRouteIndex,
+                                        isSaved = savedRoutes.any { it.id == key },
+                                        onChoose = { chosenRouteIndex = index },
+                                        onShare = { shareRoute(route) },
+                                        onToggleSave = {
+                                            savedRoutes = savedRouteStore.toggle(
+                                                SavedRoute(
+                                                    id = key,
+                                                    summary = route.summary,
+                                                    destinationName = destination.name,
+                                                    durationText = route.durationText,
+                                                    distanceText = route.distanceText,
+                                                    sensitivityLabel = if (route.isScored) {
+                                                        route.sensitivity.name
+                                                    } else {
+                                                        "Unrated"
+                                                    }
+                                                )
+                                            )
+                                        }
+                                    )
+                                    Spacer(modifier = Modifier.height(14.dp))
+                                }
+
+                                // Choosing has to lead somewhere: this is where the
+                                // old Directions button's job went, applied to
+                                // whichever route the user settled on.
+                                ranked.getOrNull(chosenRouteIndex)?.let { chosen ->
+                                    Button(
+                                        modifier = Modifier.fillMaxWidth(),
+                                        onClick = {
+                                            if (chosen.sensitivity == Sensitivity.High) {
                                                 onWarning()
                                             } else {
                                                 onNavigate()
                                             }
-                                        }
-                                    )
-                                    Spacer(modifier = Modifier.height(14.dp))
+                                        },
+                                        colors = ButtonDefaults.buttonColors(
+                                            containerColor = SenseBlue
+                                        ),
+                                        shape = RoundedCornerShape(14.dp)
+                                    ) {
+                                        Text("Start - ${chosen.durationText}")
+                                    }
                                 }
                             }
                         }
@@ -1840,8 +1926,25 @@ private fun SearchResultRow(result: SearchResult, onClick: () -> Unit) {
 }
 
 @Composable
-private fun RouteCard(route: ScoredRoute, isRecommended: Boolean, onDirections: () -> Unit) {
-    Column(modifier = Modifier.fillMaxWidth()) {
+private fun RouteCard(
+    route: ScoredRoute,
+    isRecommended: Boolean,
+    isChosen: Boolean,
+    isSaved: Boolean,
+    onChoose: () -> Unit,
+    onShare: () -> Unit,
+    onToggleSave: () -> Unit
+) {
+    Column(
+        modifier = Modifier
+            .fillMaxWidth()
+            .clip(RoundedCornerShape(14.dp))
+            // The chosen route is tinted as well as labelled, so which one is
+            // drawn solid on the map is answerable without reading the buttons.
+            .background(if (isChosen) SenseSoftBlue else Color.Transparent)
+            .clickable(onClick = onChoose)
+            .padding(if (isChosen) 12.dp else 0.dp)
+    ) {
         Row(verticalAlignment = Alignment.CenterVertically) {
             Box(
                 modifier = Modifier
@@ -1885,14 +1988,43 @@ private fun RouteCard(route: ScoredRoute, isRecommended: Boolean, onDirections: 
         )
         Spacer(modifier = Modifier.height(12.dp))
         Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-            Button(onClick = onDirections, colors = ButtonDefaults.buttonColors(containerColor = SenseSoftBlue, contentColor = SenseBlue)) {
-                Text("Directions")
+            Button(
+                onClick = onChoose,
+                colors = if (isChosen) {
+                    ButtonDefaults.buttonColors(
+                        containerColor = SenseBlue,
+                        contentColor = Color.White
+                    )
+                } else {
+                    ButtonDefaults.buttonColors(
+                        containerColor = Color.White,
+                        contentColor = SenseBlue
+                    )
+                },
+                border = if (isChosen) null else BorderStroke(1.dp, SenseBlue),
+                shape = RoundedCornerShape(12.dp)
+            ) {
+                Text(if (isChosen) "Chosen" else "Choose")
             }
-            Button(onClick = {}, colors = ButtonDefaults.buttonColors(containerColor = SenseSoftBlue, contentColor = SenseBlue)) {
+            Button(
+                onClick = onShare,
+                colors = ButtonDefaults.buttonColors(
+                    containerColor = SenseSoftBlue,
+                    contentColor = SenseBlue
+                ),
+                shape = RoundedCornerShape(12.dp)
+            ) {
                 Text("Share")
             }
-            Button(onClick = {}, colors = ButtonDefaults.buttonColors(containerColor = SenseSoftBlue, contentColor = SenseBlue)) {
-                Text("Save")
+            Button(
+                onClick = onToggleSave,
+                colors = ButtonDefaults.buttonColors(
+                    containerColor = if (isSaved) SensePink else SenseSoftBlue,
+                    contentColor = if (isSaved) Color.White else SenseBlue
+                ),
+                shape = RoundedCornerShape(12.dp)
+            ) {
+                Text(if (isSaved) "Saved" else "Save")
             }
         }
     }

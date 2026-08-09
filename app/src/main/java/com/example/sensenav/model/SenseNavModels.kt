@@ -31,6 +31,22 @@ data class Refuge(
 )
 
 /**
+ * A route the user kept for later.
+ *
+ * Stores the text the card showed rather than the polyline: geometry and
+ * pedestrian counts go stale within the hour, and a saved route is a reminder
+ * of a choice, not a cached result to replay.
+ */
+data class SavedRoute(
+    val id: String,
+    val summary: String,
+    val destinationName: String,
+    val durationText: String,
+    val distanceText: String,
+    val sensitivityLabel: String
+)
+
+/**
  * A location the user pinned by hand instead of using the device's own.
  *
  * [label] is what they searched for rather than what the geocoder called it, so
