@@ -617,17 +617,18 @@ private fun HomeScreen(
                 }
             }
 
-            item { SectionHeader("Low Sensory Refuges", "See All", onNearbyMap) }
+            item { SectionHeader("Nearest Sensory Refuges", "See All", onNearbyMap) }
 
             item {
                 Text(
-                    // Not "near you" - the dataset is CBD-only, so for a suburban
-                    // user the closest of these can still be a long way off. Each
-                    // row carries its own distance.
-                    text = "Calm-rated places, closest to you first. The rating is " +
-                        "estimated from each place's category, not from live sensor " +
-                        "readings. Photos from Wikimedia Commons; places without one " +
-                        "show an illustration.",
+                    // Deliberately not "near you" - the dataset is CBD-only, so for
+                    // a suburban user the closest of these can still be a long way
+                    // off. Each row carries its own distance. The caveat stays:
+                    // these ratings are inferred, and someone choosing where to go
+                    // on the strength of one is entitled to know that.
+                    text = "Places rated calm, sorted by distance. Sensory ratings " +
+                        "are indicative and reflect the type of each place, not " +
+                        "live sensor readings.",
                     color = SenseMuted,
                     fontSize = 12.sp,
                     lineHeight = 16.sp
@@ -642,17 +643,9 @@ private fun HomeScreen(
                 }
             }
 
-            item { SectionHeader("Sensory Tolerance Options", "See All", null) }
-
-            item {
-                LazyRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                    items(listOf("All", "Low Noise", "Low Crowd", "No Construction")) { label ->
-                        FilterPill(label = label, selected = label == "All")
-                    }
-                }
-            }
-
-            items(refuges.drop(2)) { refuge ->
+            // Everything the carousel did not already show, so no refuge appears
+            // twice on the screen.
+            items(refuges.drop(3)) { refuge ->
                 RefugeListItem(refuge = refuge, onClick = { onOpenRefuge(refuge) })
             }
         }
@@ -1718,17 +1711,6 @@ private fun RouteCard(route: ScoredRoute, isRecommended: Boolean, onDirections: 
     }
 }
 
-@Composable
-private fun FilterPill(label: String, selected: Boolean) {
-    Box(
-        modifier = Modifier
-            .clip(RoundedCornerShape(14.dp))
-            .background(if (selected) SenseBlue else ScreenBg)
-            .padding(horizontal = 14.dp, vertical = 9.dp)
-    ) {
-        Text(label, color = if (selected) Color.White else SenseMuted, fontSize = 12.sp)
-    }
-}
 
 @Composable
 private fun SearchPill(text: String, modifier: Modifier, onClick: () -> Unit) {
