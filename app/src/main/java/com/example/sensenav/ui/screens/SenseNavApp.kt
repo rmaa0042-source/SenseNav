@@ -4,6 +4,9 @@ import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.gestures.Orientation
+import androidx.compose.foundation.gestures.draggable
+import androidx.compose.foundation.gestures.rememberDraggableState
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -68,6 +71,7 @@ import androidx.compose.ui.focus.FocusDirection
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalFocusManager
 import androidx.compose.ui.platform.LocalSoftwareKeyboardController
 import androidx.compose.ui.text.input.ImeAction
@@ -960,6 +964,15 @@ private fun RouteOptionsScreen(
 
     var retryCount by remember { mutableStateOf(0) }
     var state by remember { mutableStateOf<RoutesUiState>(RoutesUiState.Loading) }
+
+    // Dragged down, the panel shrinks to its handle and the planner card goes
+    // with it, leaving the map to the route. Dragging is not the only way in or
+    // out of that state - the handle takes a tap too, since a precise drag is
+    // exactly the sort of interaction this app's users may not want to make.
+    var panelExpanded by remember { mutableStateOf(true) }
+    var panelDrag by remember { mutableStateOf(0f) }
+    val panelDragThreshold = with(LocalDensity.current) { 24.dp.toPx() }
+    val panelDragState = rememberDraggableState { delta -> panelDrag += delta }
     val cameraPositionState = rememberSenseNavCameraState(
         target = LatLng(destination.latitude, destination.longitude),
         zoom = 14.2f
@@ -1017,8 +1030,9 @@ private fun RouteOptionsScreen(
     val loaded = state as? RoutesUiState.Loaded
     val ranked = loaded?.result?.routes?.rankedBySensory().orEmpty()
 
-    // Frame the whole trip once geometry arrives.
-    LaunchedEffect(ranked) {
+    // Frame the whole trip once geometry arrives, and again when the panel
+    // collapses - the map just gained the space the panel was using.
+    LaunchedEffect(ranked, panelExpanded) {
         val allPoints = ranked.flatMap { it.path }
         if (allPoints.size < 2) return@LaunchedEffect
         val bounds = LatLngBounds.builder()
@@ -1047,20 +1061,24 @@ private fun RouteOptionsScreen(
                 originColor = SenseBlue,
                 destinationColor = SensePink,
                 cameraPositionState = cameraPositionState,
-                contentPadding = PaddingValues(top = 300.dp)
+                // Collapsed, there is no planner card to keep the route clear of.
+                contentPadding = PaddingValues(top = if (panelExpanded) 300.dp else 80.dp)
             )
-            RoutePlannerCard(
-                originInput = originInput,
-                onOriginInputChange = { originInput = it },
-                destinationInput = destinationInput,
-                onDestinationInputChange = { destinationInput = it },
-                onSubmit = submitPlaces,
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .padding(horizontal = 16.dp)
-                    // Clears the back button sitting above it.
-                    .padding(top = 90.dp)
-            )
+            if (panelExpanded) {
+                RoutePlannerCard(
+                    originInput = originInput,
+                    onOriginInputChange = { originInput = it },
+                    destinationInput = destinationInput,
+                    onDestinationInputChange = { destinationInput = it },
+                    onSubmit = submitPlaces,
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(horizontal = 16.dp)
+                        // Clears the back button sitting above it.
+                        .padding(top = 90.dp)
+                )
+            }
+            // Kept in both states: collapsing hides the planner, not the way out.
             SmallRoundButton(
                 text = "<",
                 onClick = onBack,
@@ -1076,53 +1094,114 @@ private fun RouteOptionsScreen(
             shadowElevation = 10.dp,
             shape = RoundedCornerShape(topStart = 24.dp, topEnd = 24.dp)
         ) {
-            Column(modifier = Modifier.padding(20.dp)) {
-                Row(verticalAlignment = Alignment.CenterVertically) {
-                    Text(
-                        "Route Options",
-                        modifier = Modifier.weight(1f),
-                        color = SenseInk,
-                        fontSize = 21.sp,
-                        fontWeight = FontWeight.Bold
+            Column {
+                // Drag down to collapse, up to restore. Tapping does the same, so
+                // the panel is reachable without a sustained gesture.
+                Box(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .draggable(
+                            state = panelDragState,
+                            orientation = Orientation.Vertical,
+                            onDragStopped = {
+                                if (panelDrag > panelDragThreshold) panelExpanded = false
+                                if (panelDrag < -panelDragThreshold) panelExpanded = true
+                                panelDrag = 0f
+                            }
+                        )
+                        .clickable { panelExpanded = !panelExpanded }
+                        .padding(vertical = 10.dp),
+                    contentAlignment = Alignment.Center
+                ) {
+                    Box(
+                        modifier = Modifier
+                            .width(40.dp)
+                            .height(4.dp)
+                            .clip(RoundedCornerShape(2.dp))
+                            .background(Color(0xFFD3DAE6))
                     )
-                    SmallRoundButton("X", onBack)
                 }
-                Spacer(modifier = Modifier.height(8.dp))
 
-                when (val current = state) {
-                    is RoutesUiState.Loading -> RoutesLoading()
-
-                    is RoutesUiState.Error -> RoutesError(
-                        message = current.message,
-                        onRetry = { retryCount++ }
-                    )
-
-                    is RoutesUiState.Loaded -> {
-                        if (!current.result.isScored) {
-                            // No sensor coverage: must not imply a sensory rating.
+                if (panelExpanded) {
+                    Column(
+                        modifier = Modifier.padding(start = 20.dp, end = 20.dp, bottom = 20.dp)
+                    ) {
+                        Row(verticalAlignment = Alignment.CenterVertically) {
                             Text(
-                                text = "No pedestrian sensor coverage for this trip - " +
-                                    "showing the plain walking route.",
-                                color = SenseMuted,
-                                fontSize = 12.sp,
-                                lineHeight = 16.sp
+                                "Route Options",
+                                modifier = Modifier.weight(1f),
+                                color = SenseInk,
+                                fontSize = 21.sp,
+                                fontWeight = FontWeight.Bold
                             )
-                            Spacer(modifier = Modifier.height(12.dp))
+                            SmallRoundButton("X", onBack)
                         }
-                        ranked.forEachIndexed { index, route ->
-                            RouteCard(
-                                route = route,
-                                isRecommended = index == 0 && current.result.isScored,
-                                onDirections = {
-                                    if (route.sensitivity == Sensitivity.High) {
-                                        onWarning()
-                                    } else {
-                                        onNavigate()
-                                    }
+                        Spacer(modifier = Modifier.height(8.dp))
+
+                        when (val current = state) {
+                            is RoutesUiState.Loading -> RoutesLoading()
+
+                            is RoutesUiState.Error -> RoutesError(
+                                message = current.message,
+                                onRetry = { retryCount++ }
+                            )
+
+                            is RoutesUiState.Loaded -> {
+                                if (!current.result.isScored) {
+                                    // No sensor coverage: must not imply a rating.
+                                    Text(
+                                        text = "No pedestrian sensor coverage for this " +
+                                            "trip - showing the plain walking route.",
+                                        color = SenseMuted,
+                                        fontSize = 12.sp,
+                                        lineHeight = 16.sp
+                                    )
+                                    Spacer(modifier = Modifier.height(12.dp))
                                 }
-                            )
-                            Spacer(modifier = Modifier.height(14.dp))
+                                ranked.forEachIndexed { index, route ->
+                                    RouteCard(
+                                        route = route,
+                                        isRecommended = index == 0 && current.result.isScored,
+                                        onDirections = {
+                                            if (route.sensitivity == Sensitivity.High) {
+                                                onWarning()
+                                            } else {
+                                                onNavigate()
+                                            }
+                                        }
+                                    )
+                                    Spacer(modifier = Modifier.height(14.dp))
+                                }
+                            }
                         }
+                    }
+                } else {
+                    // Collapsed: enough to say what is on the map, without taking
+                    // any of it back.
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .clickable { panelExpanded = true }
+                            .padding(horizontal = 20.dp)
+                            .padding(bottom = 14.dp),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Text(
+                            text = ranked.firstOrNull()
+                                ?.let { "${it.durationText} - ${it.summary}" }
+                                ?: "Route options",
+                            modifier = Modifier.weight(1f),
+                            color = SenseInk,
+                            fontSize = 13.sp,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis
+                        )
+                        Text(
+                            text = "Show",
+                            color = SenseBlue,
+                            fontSize = 12.sp,
+                            fontWeight = FontWeight.Bold
+                        )
                     }
                 }
             }
