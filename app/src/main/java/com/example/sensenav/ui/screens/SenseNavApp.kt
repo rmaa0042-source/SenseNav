@@ -560,18 +560,19 @@ private fun HomeScreen(
                             .background(Brush.verticalGradient(listOf(Color(0xFFFFD6A5), Color(0xFF4A2C2A))))
                     )
                     Spacer(modifier = Modifier.width(12.dp))
-                    // Both lines are edited in place. They keep their original
-                    // look, with padding added so each is a comfortable tap
-                    // target rather than a 12sp sliver of text.
+                    // Both lines are edited in place. Padding keeps each one a
+                    // usable tap target, and the tightened line heights stop
+                    // that padding from reading as a gap between the two.
                     Column(modifier = Modifier.weight(1f)) {
                         Text(
                             text = displayName,
                             modifier = Modifier
                                 .clip(RoundedCornerShape(6.dp))
                                 .clickable(onClick = onEditName)
-                                .padding(vertical = 4.dp, horizontal = 2.dp),
+                                .padding(vertical = 2.dp, horizontal = 2.dp),
                             color = SenseInk,
                             fontSize = 18.sp,
+                            lineHeight = 20.sp,
                             fontWeight = FontWeight.Bold,
                             maxLines = 1,
                             overflow = TextOverflow.Ellipsis
@@ -581,9 +582,10 @@ private fun HomeScreen(
                             modifier = Modifier
                                 .clip(RoundedCornerShape(6.dp))
                                 .clickable(onClick = onEditLocation)
-                                .padding(vertical = 4.dp, horizontal = 2.dp),
+                                .padding(vertical = 2.dp, horizontal = 2.dp),
                             color = SenseMuted,
                             fontSize = 12.sp,
+                            lineHeight = 14.sp,
                             maxLines = 1,
                             overflow = TextOverflow.Ellipsis
                         )
@@ -617,22 +619,26 @@ private fun HomeScreen(
                 }
             }
 
-            item { SectionHeader("Nearest Sensory Refuges", "See All", onNearbyMap) }
-
+            // Heading and its caption share one item: as separate items the
+            // column's 16dp arrangement spacing lands between them, on top of
+            // the height the "See All" button already contributes.
             item {
-                Text(
-                    // Deliberately not "near you" - the dataset is CBD-only, so for
-                    // a suburban user the closest of these can still be a long way
-                    // off. Each row carries its own distance. The caveat stays:
-                    // these ratings are inferred, and someone choosing where to go
-                    // on the strength of one is entitled to know that.
-                    text = "Places rated calm, sorted by distance. Sensory ratings " +
-                        "are indicative and reflect the type of each place, not " +
-                        "live sensor readings.",
-                    color = SenseMuted,
-                    fontSize = 12.sp,
-                    lineHeight = 16.sp
-                )
+                Column {
+                    SectionHeader("Nearest Sensory Refuges", "See All", onNearbyMap)
+                    Text(
+                        // Deliberately not "near you" - the dataset is CBD-only, so
+                        // for a suburban user the closest of these can still be a
+                        // long way off. Each row carries its own distance. The
+                        // caveat stays: these ratings are inferred, and someone
+                        // choosing where to go on one is entitled to know that.
+                        text = "Places rated calm, sorted by distance. Sensory ratings " +
+                            "are indicative and reflect the type of each place, not " +
+                            "live sensor readings.",
+                        color = SenseMuted,
+                        fontSize = 12.sp,
+                        lineHeight = 16.sp
+                    )
+                }
             }
 
             item {
