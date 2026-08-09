@@ -24,6 +24,7 @@ import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Card
@@ -42,6 +43,7 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -74,7 +76,9 @@ import com.example.sensenav.data.LandmarkRepository
 import com.example.sensenav.data.LocationProvider
 import com.example.sensenav.data.MockSenseNavRepository
 import com.example.sensenav.data.PlaceGeocoder
+import com.example.sensenav.data.ProfileStore
 import com.example.sensenav.data.RouteRepository
+import com.example.sensenav.model.SavedPlace
 import com.example.sensenav.model.GeoPoint
 import com.example.sensenav.model.Refuge
 import com.example.sensenav.model.RouteResult
@@ -95,6 +99,7 @@ import com.google.android.gms.maps.model.LatLng
 import com.google.android.gms.maps.model.LatLngBounds
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.launch
 import retrofit2.HttpException
 import java.io.IOException
 import kotlin.math.roundToInt
@@ -199,8 +204,16 @@ fun SenseNavApp() {
     // rather than fetched, and mirrored here so the screens recompose on change.
     val context = LocalContext.current
     val historyStore = remember(context) { HistoryStore(context) }
+    val profileStore = remember(context) { ProfileStore(context) }
     val locationProvider = remember(context) { LocationProvider(context) }
     val placeGeocoder = remember(context) { PlaceGeocoder(context) }
+
+    var displayName by remember { mutableStateOf(profileStore.displayName()) }
+    // Null means "follow the device". A pinned place overrides it everywhere,
+    // so what the header says and what the app searches around stay the same.
+    var savedPlace by remember { mutableStateOf(profileStore.savedPlace()) }
+    var editingName by remember { mutableStateOf(false) }
+    var editingLocation by remember { mutableStateOf(false) }
     var recentSearches by remember { mutableStateOf(historyStore.recentSearches()) }
     var recentlyViewed by remember { mutableStateOf(historyStore.recentlyViewed()) }
 
@@ -223,8 +236,11 @@ fun SenseNavApp() {
 
     // Held until the splash clears, so the dialog lands on the home screen
     // where the location it unlocks is visible.
-    LaunchedEffect(screen, hasLocationPermission) {
-        if (screen == AppScreen.Home && !hasLocationPermission && !permissionRequested) {
+    LaunchedEffect(screen, hasLocationPermission, savedPlace) {
+        // Someone who has pinned a location is not asking to be located.
+        if (savedPlace == null &&
+            screen == AppScreen.Home && !hasLocationPermission && !permissionRequested
+        ) {
             permissionRequested = true
             locationPermissionLauncher.launch(
                 arrayOf(
@@ -236,25 +252,31 @@ fun SenseNavApp() {
     }
 
     // Recommendations come from the Calm-rated entries in the API's landmark
-    // dataset, anchored on where the user actually is. Outside the dataset's
-    // coverage that query legitimately returns nothing, so the older refuge
-    // endpoint and then the local catalogue stand in rather than leaving the
-    // home screen empty. Re-runs once permission is granted, so a first launch
-    // does not stay stuck on the permissionless fallback.
-    LaunchedEffect(hasLocationPermission) {
-        locationLabel = "Finding your location..."
-        val current = locationProvider.currentLocation()
-        locationLabel = when {
-            // Permission denied, location off, or no fix yet - say so instead of
-            // naming the fallback point, which is not where the user is.
-            current == null -> "Location unavailable"
-            // Coordinates are a poor label but still honest when the device's
-            // geocoder has no name for the point (offline, or unmapped area).
-            else -> placeGeocoder.describe(current) ?: current.toCoordinateLabel()
+    // dataset, anchored on the pinned location or, failing that, where the user
+    // actually is. Outside the dataset's coverage that query legitimately
+    // returns nothing, so the older refuge endpoint and then the local catalogue
+    // stand in rather than leaving the home screen empty. Re-runs when the pin
+    // changes or permission is granted, so neither leaves the list stale.
+    LaunchedEffect(hasLocationPermission, savedPlace) {
+        val pinned = savedPlace
+        val near = if (pinned != null) {
+            locationLabel = pinned.label
+            GeoPoint(pinned.latitude, pinned.longitude)
+        } else {
+            locationLabel = "Finding your location..."
+            val current = locationProvider.currentLocation()
+            locationLabel = when {
+                // Permission denied, location off, or no fix yet - say so instead
+                // of naming the fallback point, which is not where the user is.
+                current == null -> "Location unavailable"
+                // Coordinates are a poor label but still honest when the device's
+                // geocoder has no name for the point (offline, or unmapped area).
+                else -> placeGeocoder.describe(current) ?: current.toCoordinateLabel()
+            }
+            current ?: repository.defaultOrigin
         }
-
-        val near = current ?: repository.defaultOrigin
-        Log.i(TAG, "Loading refuges near ${near.latitude},${near.longitude} (device fix: ${current != null})")
+        val anchorSource = if (pinned != null) "pinned '${pinned.label}'" else "device"
+        Log.i(TAG, "Loading refuges near ${near.latitude},${near.longitude} (from $anchorSource)")
 
         val nearby = try {
             landmarkRepository.getLowSensoryRefuges(near)
@@ -332,7 +354,10 @@ fun SenseNavApp() {
             AppScreen.Splash -> SplashScreen(onFinished = { screen = AppScreen.Home })
             AppScreen.Home -> HomeScreen(
                 refuges = refuges,
+                displayName = displayName,
                 locationLabel = locationLabel,
+                onEditName = { editingName = true },
+                onEditLocation = { editingLocation = true },
                 onSearch = { screen = AppScreen.Search },
                 onNearbyMap = { screen = AppScreen.NearbyMap },
                 onOpenRefuge = { refuge ->
@@ -378,6 +403,7 @@ fun SenseNavApp() {
             )
             AppScreen.Routes -> RouteOptionsScreen(
                 destination = destination,
+                pinnedOrigin = savedPlace?.let { GeoPoint(it.latitude, it.longitude) },
                 defaultOrigin = repository.defaultOrigin,
                 initialOrigin = startPoint,
                 initialDestination = endPoint.ifBlank { destination.name },
@@ -391,6 +417,35 @@ fun SenseNavApp() {
                 routes = loadedRoutes,
                 onBack = { screen = AppScreen.Routes },
                 onReroute = { screen = AppScreen.Routes }
+            )
+        }
+
+        if (editingName) {
+            EditNameDialog(
+                initialName = displayName,
+                onDismiss = { editingName = false },
+                onSave = { entered ->
+                    displayName = profileStore.saveDisplayName(entered)
+                    editingName = false
+                }
+            )
+        }
+
+        if (editingLocation) {
+            EditLocationDialog(
+                initialQuery = savedPlace?.label.orEmpty(),
+                isPinned = savedPlace != null,
+                geocoder = placeGeocoder,
+                onDismiss = { editingLocation = false },
+                onUseDeviceLocation = {
+                    profileStore.clearPlace()
+                    savedPlace = null
+                    editingLocation = false
+                },
+                onSave = { place ->
+                    savedPlace = profileStore.savePlace(place)
+                    editingLocation = false
+                }
             )
         }
       }
@@ -460,7 +515,10 @@ private fun SplashScreen(onFinished: () -> Unit) {
 @Composable
 private fun HomeScreen(
     refuges: List<Refuge>,
+    displayName: String,
     locationLabel: String,
+    onEditName: () -> Unit,
+    onEditLocation: () -> Unit,
     onSearch: () -> Unit,
     onNearbyMap: () -> Unit,
     onOpenRefuge: (Refuge) -> Unit,
@@ -502,10 +560,28 @@ private fun HomeScreen(
                             .background(Brush.verticalGradient(listOf(Color(0xFFFFD6A5), Color(0xFF4A2C2A))))
                     )
                     Spacer(modifier = Modifier.width(12.dp))
+                    // Both lines are edited in place. They keep their original
+                    // look, with padding added so each is a comfortable tap
+                    // target rather than a 12sp sliver of text.
                     Column(modifier = Modifier.weight(1f)) {
-                        Text("Matr Kohler", color = SenseInk, fontSize = 18.sp, fontWeight = FontWeight.Bold)
                         Text(
-                            text = locationLabel,
+                            text = displayName,
+                            modifier = Modifier
+                                .clip(RoundedCornerShape(6.dp))
+                                .clickable(onClick = onEditName)
+                                .padding(vertical = 4.dp, horizontal = 2.dp),
+                            color = SenseInk,
+                            fontSize = 18.sp,
+                            fontWeight = FontWeight.Bold,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis
+                        )
+                        Text(
+                            text = "$locationLabel  (edit)",
+                            modifier = Modifier
+                                .clip(RoundedCornerShape(6.dp))
+                                .clickable(onClick = onEditLocation)
+                                .padding(vertical = 4.dp, horizontal = 2.dp),
                             color = SenseMuted,
                             fontSize = 12.sp,
                             maxLines = 1,
@@ -845,6 +921,7 @@ private fun SearchScreen(
 @Composable
 private fun RouteOptionsScreen(
     destination: Refuge,
+    pinnedOrigin: GeoPoint?,
     defaultOrigin: GeoPoint,
     initialOrigin: String,
     initialDestination: String,
@@ -877,13 +954,16 @@ private fun RouteOptionsScreen(
         zoom = 14.2f
     )
 
-    LaunchedEffect(destination.id, submittedOrigin, submittedDestination, retryCount) {
+    LaunchedEffect(destination.id, submittedOrigin, submittedDestination, retryCount, pinnedOrigin) {
         state = RoutesUiState.Loading
         state = try {
             val origin = if (submittedOrigin.isBlank()) {
-                // Real device position when we have it; the CBD fallback keeps
-                // the screen usable on an emulator or with location denied.
-                locationProvider.currentLocation() ?: defaultOrigin
+                // A location pinned on the home screen wins: it is what the user
+                // is being shown refuges around, so routing from anywhere else
+                // would contradict the list they picked from. Otherwise the real
+                // device position, with the CBD fallback keeping the screen
+                // usable on an emulator or with location denied.
+                pinnedOrigin ?: locationProvider.currentLocation() ?: defaultOrigin
             } else {
                 placeGeocoder.resolve(submittedOrigin)
                     ?: throw PlaceNotFoundException(submittedOrigin)
@@ -1306,6 +1386,120 @@ private fun WarningScreen(
             }
         }
     }
+}
+
+@Composable
+private fun EditNameDialog(
+    initialName: String,
+    onDismiss: () -> Unit,
+    onSave: (String) -> Unit
+) {
+    var value by remember { mutableStateOf(initialName) }
+    val focusRequester = remember { FocusRequester() }
+
+    LaunchedEffect(Unit) { runCatching { focusRequester.requestFocus() } }
+
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text("Your name") },
+        text = {
+            OutlinedTextField(
+                value = value,
+                onValueChange = { value = it },
+                modifier = Modifier.fillMaxWidth().focusRequester(focusRequester),
+                singleLine = true,
+                placeholder = { Text("Name shown on the home screen") },
+                keyboardOptions = KeyboardOptions(imeAction = ImeAction.Done),
+                keyboardActions = KeyboardActions(onDone = { onSave(value) })
+            )
+        },
+        confirmButton = { TextButton(onClick = { onSave(value) }) { Text("Save") } },
+        dismissButton = { TextButton(onClick = onDismiss) { Text("Cancel") } }
+    )
+}
+
+/**
+ * Pins the location by name. The typed text is geocoded before it is accepted,
+ * so a place that cannot be found is rejected here rather than silently
+ * anchoring the whole refuge list somewhere wrong.
+ */
+@Composable
+private fun EditLocationDialog(
+    initialQuery: String,
+    isPinned: Boolean,
+    geocoder: PlaceGeocoder,
+    onDismiss: () -> Unit,
+    onUseDeviceLocation: () -> Unit,
+    onSave: (SavedPlace) -> Unit
+) {
+    var query by remember { mutableStateOf(initialQuery) }
+    var error by remember { mutableStateOf<String?>(null) }
+    var checking by remember { mutableStateOf(false) }
+    val scope = rememberCoroutineScope()
+
+    val submit = {
+        val typed = query.trim()
+        if (typed.isEmpty()) {
+            error = "Enter a suburb or address."
+        } else {
+            checking = true
+            error = null
+            scope.launch {
+                val point = runCatching { geocoder.resolve(typed) }.getOrNull()
+                checking = false
+                if (point == null) {
+                    error = "Couldn't find \"$typed\". Try a suburb or a fuller address."
+                } else {
+                    onSave(SavedPlace(typed, point.latitude, point.longitude))
+                }
+            }
+            Unit
+        }
+    }
+
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text("Your location") },
+        text = {
+            Column {
+                Text(
+                    text = "Refuges are found around this location. Leave it on your " +
+                        "device location to follow you as you move.",
+                    color = SenseMuted,
+                    fontSize = 12.sp,
+                    lineHeight = 16.sp
+                )
+                Spacer(modifier = Modifier.height(12.dp))
+                OutlinedTextField(
+                    value = query,
+                    onValueChange = { query = it; error = null },
+                    modifier = Modifier.fillMaxWidth(),
+                    singleLine = true,
+                    enabled = !checking,
+                    placeholder = { Text("Suburb or address") },
+                    isError = error != null,
+                    keyboardOptions = KeyboardOptions(imeAction = ImeAction.Search),
+                    keyboardActions = KeyboardActions(onSearch = { submit() })
+                )
+                error?.let {
+                    Spacer(modifier = Modifier.height(6.dp))
+                    Text(it, color = SensePink, fontSize = 12.sp, lineHeight = 16.sp)
+                }
+                if (isPinned) {
+                    Spacer(modifier = Modifier.height(4.dp))
+                    TextButton(onClick = onUseDeviceLocation) {
+                        Text("Use my device location instead", fontSize = 13.sp)
+                    }
+                }
+            }
+        },
+        confirmButton = {
+            TextButton(onClick = { submit() }, enabled = !checking) {
+                Text(if (checking) "Checking..." else "Save")
+            }
+        },
+        dismissButton = { TextButton(onClick = onDismiss) { Text("Cancel") } }
+    )
 }
 
 /** Stands in for a history list that has nothing in it yet. */

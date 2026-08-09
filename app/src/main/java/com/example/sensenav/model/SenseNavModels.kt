@@ -31,6 +31,18 @@ data class Refuge(
 )
 
 /**
+ * A location the user pinned by hand instead of using the device's own.
+ *
+ * [label] is what they searched for rather than what the geocoder called it, so
+ * the home screen echoes their own words back to them.
+ */
+data class SavedPlace(
+    val label: String,
+    val latitude: Double,
+    val longitude: Double
+)
+
+/**
  * A freely-licensed photograph of a refuge, sourced from Wikimedia.
  *
  * [artist] and [license] are carried alongside the URL because the CC licences
