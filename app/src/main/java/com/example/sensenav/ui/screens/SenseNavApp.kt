@@ -44,6 +44,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateListOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
@@ -200,7 +201,21 @@ private enum class AppScreen {
 @Composable
 fun SenseNavApp() {
     val repository = remember { MockSenseNavRepository() }
-    var screen by remember { mutableStateOf(AppScreen.Splash) }
+    // A back stack rather than a single current screen, so that both the system
+    // back gesture and the on-screen back buttons return to wherever the user
+    // actually came from instead of a fixed parent for each page.
+    val backStack = remember { mutableStateListOf(AppScreen.Splash) }
+    val screen = backStack.last()
+    val navigateTo = remember {
+        { target: AppScreen ->
+            // Re-selecting the page already on show is a no-op, so back never
+            // has to step through a repeat of it.
+            if (backStack.last() != target) backStack.add(target)
+        }
+    }
+    val goBack = remember {
+        { if (backStack.size > 1) backStack.removeAt(backStack.lastIndex) }
+    }
     val warningRepository = remember { WarningRepository() }
     val refugeRepository = remember { RefugeRepository() }
     val landmarkRepository = remember { LandmarkRepository() }
@@ -356,42 +371,42 @@ fun SenseNavApp() {
     }
 
     // Keeps the system back gesture consistent with the in-app back buttons.
-    BackHandler(enabled = screen != AppScreen.Splash && screen != AppScreen.Home) {
-        screen = when (screen) {
-            AppScreen.Routes -> AppScreen.NearbyMap
-            AppScreen.Warning -> AppScreen.Routes
-            else -> AppScreen.Home
-        }
-    }
+    // Disabled at the root so back there still leaves the app.
+    BackHandler(enabled = backStack.size > 1, onBack = goBack)
 
     MaterialTheme {
       CompositionLocalProvider(LocalRefugeImages provides refugeImages) {
         when (screen) {
-            AppScreen.Splash -> SplashScreen(onFinished = { screen = AppScreen.Home })
+            AppScreen.Splash -> SplashScreen(onFinished = {
+                // Replaces the splash rather than stacking on it: once it has
+                // cleared there is nothing to go back to.
+                backStack.clear()
+                backStack.add(AppScreen.Home)
+            })
             AppScreen.Home -> HomeScreen(
                 refuges = refuges,
                 displayName = displayName,
                 locationLabel = locationLabel,
                 onEditName = { editingName = true },
                 onEditLocation = { editingLocation = true },
-                onSearch = { screen = AppScreen.Search },
-                onNearbyMap = { screen = AppScreen.NearbyMap },
+                onSearch = { navigateTo(AppScreen.Search) },
+                onNearbyMap = { navigateTo(AppScreen.NearbyMap) },
                 onOpenRefuge = { refuge ->
                     openRefuge(refuge)
-                    screen = AppScreen.NearbyMap
+                    navigateTo(AppScreen.NearbyMap)
                 },
-                onWarning = { screen = AppScreen.Warning }
+                onWarning = { navigateTo(AppScreen.Warning) }
             )
             AppScreen.NearbyMap -> NearbyMapScreen(
                 refuges = refuges,
                 initialRefuge = destination,
-                onBack = { screen = AppScreen.Home },
-                onSearch = { screen = AppScreen.Search },
+                onBack = goBack,
+                onSearch = { navigateTo(AppScreen.Search) },
                 onNavigate = { refuge ->
                     openRefuge(refuge)
-                    screen = AppScreen.Routes
+                    navigateTo(AppScreen.Routes)
                 },
-                onWarning = { screen = AppScreen.Warning }
+                onWarning = { navigateTo(AppScreen.Warning) }
             )
             AppScreen.Search -> SearchScreen(
                 repository = repository,
@@ -408,16 +423,16 @@ fun SenseNavApp() {
                 onClearSearches = { recentSearches = historyStore.clearSearches() },
                 onClearViewed = { recentlyViewed = historyStore.clearViewed() },
                 onClearSavedRoutes = { savedRoutes = savedRouteStore.clear() },
-                onBack = { screen = AppScreen.Home },
+                onBack = goBack,
                 onRoute = { typedDestination ->
                     endPoint = typedDestination
-                    screen = AppScreen.Routes
+                    navigateTo(AppScreen.Routes)
                 },
                 onRefugeSelected = { refuge ->
                     openRefuge(refuge)
-                    screen = AppScreen.NearbyMap
+                    navigateTo(AppScreen.NearbyMap)
                 },
-                onWarning = { screen = AppScreen.Warning }
+                onWarning = { navigateTo(AppScreen.Warning) }
             )
             AppScreen.Routes -> RouteOptionsScreen(
                 destination = destination,
@@ -427,16 +442,16 @@ fun SenseNavApp() {
                 onToggleSavedRoute = { savedRoutes = savedRouteStore.toggle(it) },
                 initialOrigin = startPoint,
                 initialDestination = endPoint.ifBlank { destination.name },
-                onBack = { screen = AppScreen.NearbyMap },
-                onWarning = { screen = AppScreen.Warning },
-                onNavigate = { screen = AppScreen.NearbyMap },
+                onBack = goBack,
+                onWarning = { navigateTo(AppScreen.Warning) },
+                onNavigate = { navigateTo(AppScreen.NearbyMap) },
                 onRoutesLoaded = { loadedRoutes = it }
             )
             AppScreen.Warning -> WarningScreen(
                 warnings = warnings,
                 routes = loadedRoutes,
-                onBack = { screen = AppScreen.Routes },
-                onReroute = { screen = AppScreen.Routes }
+                onBack = goBack,
+                onReroute = { navigateTo(AppScreen.Routes) }
             )
         }
 
