@@ -7,7 +7,8 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 
 /**
- * Turns a typed place name into coordinates using Android's built-in [Geocoder].
+ * Converts between typed place names and coordinates using Android's built-in
+ * [Geocoder].
  *
  * Uses the platform geocoder rather than Places Autocomplete deliberately: it
  * needs no API key and no billing, so it stays inside the free Maps SDK usage.
@@ -23,6 +24,34 @@ class PlaceGeocoder(private val context: Context) {
             // rather than to a same-named street overseas.
             lookup(trimmed, boundToMelbourne = true)
                 ?: lookup(trimmed, boundToMelbourne = false)
+        }
+    }
+
+    /**
+     * A short human-readable name for a point - "Carlton, Victoria" - for
+     * telling the user where they are. Null when the device has no geocoder
+     * available or nothing matches, so callers must have a fallback.
+     */
+    @Suppress("DEPRECATION") // async variant is API 33+; this project supports 26+
+    suspend fun describe(point: GeoPoint): String? {
+        if (!Geocoder.isPresent()) return null
+
+        return withContext(Dispatchers.IO) {
+            runCatching {
+                Geocoder(context)
+                    .getFromLocation(point.latitude, point.longitude, 1)
+                    ?.firstOrNull()
+                    ?.let { address ->
+                        // Suburb first where the device reports one, since it
+                        // locates the user more precisely than the city does.
+                        val area = address.subLocality
+                            ?: address.locality
+                            ?: address.subAdminArea
+                        listOfNotNull(area, address.adminArea)
+                            .joinToString(", ")
+                            .takeIf { it.isNotBlank() }
+                    }
+            }.getOrNull()
         }
     }
 

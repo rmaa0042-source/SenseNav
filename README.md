@@ -79,6 +79,14 @@ Check it is alive by opening `http://34.172.95.142:8000/docs` in a browser. If
 routes fail to load but the map renders, the API is the likely cause. Ping
 Elijah, who has SSH access to the VM.
 
+The same service also serves the refuge recommendations. The app calls
+`GET /landmarks/nearby` with the device's position and `sensory_rating=Calm`, so
+the "Low Sensory Refuges" list is the dataset's calm-rated landmarks, closest
+first. That rating is inferred from each landmark's category — it is not a
+sensor reading, which is why the UI labels it as an estimate. Outside the
+dataset's coverage the query returns nothing and the app falls back to its
+built-in sample refuges.
+
 > The `backend/` folder is a Spring Boot service that the app does **not** call.
 > It holds hardcoded sample data and is not wired into anything.
 

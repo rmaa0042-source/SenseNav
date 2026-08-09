@@ -9,6 +9,13 @@ data class GeoPoint(
     val longitude: Double
 )
 
+/**
+ * A place the app can recommend as a sensory refuge.
+ *
+ * [rating] and [distanceKm] are null when the source has no such value - the
+ * landmark dataset carries neither a user rating nor, for a locally held
+ * refuge, a distance - so the UI omits them rather than showing a made-up one.
+ */
 data class Refuge(
     val id: String,
     val name: String,
@@ -16,9 +23,10 @@ data class Refuge(
     val category: String,
     val latitude: Double,
     val longitude: Double,
-    val rating: Double,
+    val rating: Double?,
     val sensoryTag: String,
     val imageLabel: String,
+    val distanceKm: Double? = null,
     val isSaved: Boolean = false
 )
 

@@ -52,7 +52,11 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import android.Manifest
+import android.util.Log
 import androidx.activity.compose.BackHandler
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.text.KeyboardActions
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material3.CircularProgressIndicator
@@ -65,6 +69,7 @@ import androidx.compose.ui.platform.LocalFocusManager
 import androidx.compose.ui.platform.LocalSoftwareKeyboardController
 import androidx.compose.ui.text.input.ImeAction
 import com.example.sensenav.data.HistoryStore
+import com.example.sensenav.data.LandmarkRepository
 import com.example.sensenav.data.LocationProvider
 import com.example.sensenav.data.MockSenseNavRepository
 import com.example.sensenav.data.PlaceGeocoder
@@ -93,6 +98,8 @@ import com.example.sensenav.data.RefugeRepository
 import com.example.sensenav.data.WarningRepository
 import com.example.sensenav.model.WarningInfo
 import com.example.sensenav.data.SearchRepository
+
+private const val TAG = "SenseNav"
 
 private val SenseBlue = Color(0xFF2F5FBD)
 private val SenseSoftBlue = Color(0xFFEAF2FF)
@@ -133,6 +140,13 @@ private fun List<ScoredRoute>.rankedBySensory(): List<ScoredRoute> =
 
 private fun Refuge.toGeoPoint() = GeoPoint(latitude, longitude)
 
+private fun GeoPoint.toCoordinateLabel() = "%.4f, %.4f".format(latitude, longitude)
+
+/** Null for refuges that came from a source with no distance, so the row omits it. */
+private fun Refuge.distanceLabel(): String? = distanceKm?.let { km ->
+    if (km < 1.0) "${(km * 1000).roundToInt()} m away" else "%.1f km away".format(km)
+}
+
 private class PlaceNotFoundException(val query: String) : Exception()
 
 private fun Throwable.toUserMessage(): String = when (this) {
@@ -171,23 +185,96 @@ fun SenseNavApp() {
     var screen by remember { mutableStateOf(AppScreen.Splash) }
     val warningRepository = remember { WarningRepository() }
     val refugeRepository = remember { RefugeRepository() }
+    val landmarkRepository = remember { LandmarkRepository() }
     val searchRepository = remember { SearchRepository() }
 
     // History is device-local, so it is read straight from disk at start-up
     // rather than fetched, and mirrored here so the screens recompose on change.
     val context = LocalContext.current
     val historyStore = remember(context) { HistoryStore(context) }
+    val locationProvider = remember(context) { LocationProvider(context) }
+    val placeGeocoder = remember(context) { PlaceGeocoder(context) }
     var recentSearches by remember { mutableStateOf(historyStore.recentSearches()) }
     var recentlyViewed by remember { mutableStateOf(historyStore.recentlyViewed()) }
 
     var refuges by remember { mutableStateOf<List<Refuge>>(emptyList()) }
     var warnings by remember { mutableStateOf<List<WarningInfo>>(emptyList()) }
+    // Shown under the user's name on the home screen. Starts as a status line
+    // rather than a placeholder suburb, so it never claims a location we have
+    // not actually read from the device.
+    var locationLabel by remember { mutableStateOf("Finding your location...") }
 
-    LaunchedEffect(Unit) {
-        refuges = try {
-            refugeRepository.getRefuges()
+    // Both the label and the refuge list are anchored on the device position, so
+    // permission is asked for here rather than waiting for the map screen to do
+    // it. Asked once per session: a second prompt after a denial is dismissed by
+    // the system anyway.
+    var hasLocationPermission by remember { mutableStateOf(locationProvider.hasPermission()) }
+    var permissionRequested by remember { mutableStateOf(false) }
+    val locationPermissionLauncher = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.RequestMultiplePermissions()
+    ) { granted -> hasLocationPermission = granted.values.any { it } }
+
+    // Held until the splash clears, so the dialog lands on the home screen
+    // where the location it unlocks is visible.
+    LaunchedEffect(screen, hasLocationPermission) {
+        if (screen == AppScreen.Home && !hasLocationPermission && !permissionRequested) {
+            permissionRequested = true
+            locationPermissionLauncher.launch(
+                arrayOf(
+                    Manifest.permission.ACCESS_FINE_LOCATION,
+                    Manifest.permission.ACCESS_COARSE_LOCATION
+                )
+            )
+        }
+    }
+
+    // Recommendations come from the Calm-rated entries in the API's landmark
+    // dataset, anchored on where the user actually is. Outside the dataset's
+    // coverage that query legitimately returns nothing, so the older refuge
+    // endpoint and then the local catalogue stand in rather than leaving the
+    // home screen empty. Re-runs once permission is granted, so a first launch
+    // does not stay stuck on the permissionless fallback.
+    LaunchedEffect(hasLocationPermission) {
+        locationLabel = "Finding your location..."
+        val current = locationProvider.currentLocation()
+        locationLabel = when {
+            // Permission denied, location off, or no fix yet - say so instead of
+            // naming the fallback point, which is not where the user is.
+            current == null -> "Location unavailable"
+            // Coordinates are a poor label but still honest when the device's
+            // geocoder has no name for the point (offline, or unmapped area).
+            else -> placeGeocoder.describe(current) ?: current.toCoordinateLabel()
+        }
+
+        val near = current ?: repository.defaultOrigin
+        Log.i(TAG, "Loading refuges near ${near.latitude},${near.longitude} (device fix: ${current != null})")
+
+        val nearby = try {
+            landmarkRepository.getLowSensoryRefuges(near)
+        } catch (cancellation: CancellationException) {
+            throw cancellation
         } catch (e: Exception) {
-            repository.getRefuges()
+            // Silently falling back here is what makes a dead API look like a
+            // working app serving stale data, so every drop-through is logged.
+            Log.w(TAG, "Landmark API failed, falling back", e)
+            emptyList()
+        }
+
+        if (nearby.isEmpty()) {
+            Log.w(TAG, "No calm landmarks near the user - falling back to the refuge endpoint")
+        } else {
+            Log.i(TAG, "Loaded ${nearby.size} calm landmarks from the API")
+        }
+
+        refuges = nearby.ifEmpty {
+            try {
+                refugeRepository.getRefuges()
+            } catch (cancellation: CancellationException) {
+                throw cancellation
+            } catch (e: Exception) {
+                Log.w(TAG, "Refuge endpoint failed, using the local catalogue", e)
+                repository.getRefuges()
+            }
         }
     }
 
@@ -237,6 +324,7 @@ fun SenseNavApp() {
             AppScreen.Splash -> SplashScreen(onFinished = { screen = AppScreen.Home })
             AppScreen.Home -> HomeScreen(
                 refuges = refuges,
+                locationLabel = locationLabel,
                 onSearch = { screen = AppScreen.Search },
                 onNearbyMap = { screen = AppScreen.NearbyMap },
                 onOpenRefuge = { refuge ->
@@ -363,6 +451,7 @@ private fun SplashScreen(onFinished: () -> Unit) {
 @Composable
 private fun HomeScreen(
     refuges: List<Refuge>,
+    locationLabel: String,
     onSearch: () -> Unit,
     onNearbyMap: () -> Unit,
     onOpenRefuge: (Refuge) -> Unit,
@@ -406,7 +495,13 @@ private fun HomeScreen(
                     Spacer(modifier = Modifier.width(12.dp))
                     Column(modifier = Modifier.weight(1f)) {
                         Text("Matr Kohler", color = SenseInk, fontSize = 18.sp, fontWeight = FontWeight.Bold)
-                        Text("Melbourne CBD, VIC", color = SenseMuted, fontSize = 12.sp)
+                        Text(
+                            text = locationLabel,
+                            color = SenseMuted,
+                            fontSize = 12.sp,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis
+                        )
                     }
                     SmallRoundButton("Search", onSearch)
                     Spacer(modifier = Modifier.width(8.dp))
@@ -438,6 +533,19 @@ private fun HomeScreen(
             }
 
             item { SectionHeader("Low Sensory Refuges", "See All", onNearbyMap) }
+
+            item {
+                Text(
+                    // Not "near you" - the dataset is CBD-only, so for a suburban
+                    // user the closest of these can still be a long way off. Each
+                    // row carries its own distance.
+                    text = "Calm-rated places, closest to you first. The rating is " +
+                        "estimated from each place's category, not from live sensor readings.",
+                    color = SenseMuted,
+                    fontSize = 12.sp,
+                    lineHeight = 16.sp
+                )
+            }
 
             item {
                 LazyRow(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
@@ -1243,7 +1351,12 @@ private fun RefugePhotoCard(refuge: Refuge, onClick: () -> Unit) {
         Column(modifier = Modifier.align(Alignment.BottomStart).padding(12.dp)) {
             Text(refuge.name, color = Color.White, fontSize = 14.sp, fontWeight = FontWeight.Bold, maxLines = 2)
             Text(refuge.category, color = Color.White.copy(alpha = 0.85f), fontSize = 11.sp)
-            Text("Star ${refuge.rating}", color = Color(0xFFFFD166), fontSize = 12.sp)
+            refuge.rating?.let { rating ->
+                Text("Star $rating", color = Color(0xFFFFD166), fontSize = 12.sp)
+            }
+            refuge.distanceLabel()?.let { distance ->
+                Text(distance, color = Color.White.copy(alpha = 0.85f), fontSize = 11.sp)
+            }
         }
     }
 }
@@ -1273,7 +1386,12 @@ private fun RefugeListItem(refuge: Refuge, onClick: () -> Unit) {
                     maxLines = 1,
                     overflow = TextOverflow.Ellipsis
                 )
-                Text("Star ${refuge.rating}", color = SenseInk, fontSize = 12.sp)
+                refuge.rating?.let { rating ->
+                    Text("Star $rating", color = SenseInk, fontSize = 12.sp)
+                }
+                refuge.distanceLabel()?.let { distance ->
+                    Text(distance, color = SenseMuted, fontSize = 12.sp)
+                }
             }
             Text(refuge.subtitle, color = SenseMuted, fontSize = 12.sp)
             Text(refuge.sensoryTag, color = SenseBlue, fontSize = 14.sp, fontWeight = FontWeight.Bold)

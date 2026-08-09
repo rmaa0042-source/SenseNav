@@ -216,7 +216,13 @@ fun SenseNavMap(
             Marker(
                 state = markerState,
                 title = refuge.name,
-                snippet = "${refuge.sensoryTag} - ${refuge.rating}",
+                // Rating and distance are only present for some sources, so the
+                // snippet is assembled from whatever this refuge actually has.
+                snippet = listOfNotNull(
+                    refuge.sensoryTag,
+                    refuge.rating?.toString(),
+                    refuge.distanceKm?.let { "$it km" }
+                ).joinToString(" - "),
                 icon = BitmapDescriptorFactory.defaultMarker(
                     if (refuge.id == selectedRefugeId) {
                         BitmapDescriptorFactory.HUE_ROSE
