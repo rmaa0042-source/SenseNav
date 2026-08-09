@@ -409,7 +409,9 @@ fun SenseNavApp() {
                     openRefuge(refuge)
                     navigateTo(AppScreen.NearbyMap)
                 },
-                onWarning = { navigateTo(AppScreen.Warning) }
+                // The same dialog and the same state as the map's filter, so
+                // whichever one the user opens shows what the other one set.
+                onFilter = { editingFilter = true }
             )
             AppScreen.NearbyMap -> NearbyMapScreen(
                 refuges = refuges,
@@ -459,6 +461,7 @@ fun SenseNavApp() {
                 initialDestination = endPoint.ifBlank { destination.name },
                 sensoryFilter = sensoryFilter,
                 onBack = goBack,
+                onFilter = { editingFilter = true },
                 onWarning = { navigateTo(AppScreen.Warning) },
                 onNavigate = { navigateTo(AppScreen.NearbyMap) },
                 onRoutesLoaded = { loadedRoutes = it }
@@ -586,7 +589,7 @@ private fun HomeScreen(
     onSearch: () -> Unit,
     onNearbyMap: () -> Unit,
     onOpenRefuge: (Refuge) -> Unit,
-    onWarning: () -> Unit
+    onFilter: () -> Unit
 ) {
 
     Scaffold(
@@ -656,7 +659,7 @@ private fun HomeScreen(
                     }
                     SmallRoundButton("Search", onSearch)
                     Spacer(modifier = Modifier.width(8.dp))
-                    SmallRoundButton("Alert", onWarning)
+                    SmallRoundButton("Filter", onFilter)
                 }
             }
 
@@ -1069,6 +1072,7 @@ private fun RouteOptionsScreen(
     initialDestination: String,
     sensoryFilter: SensoryFilter,
     onBack: () -> Unit,
+    onFilter: () -> Unit,
     onWarning: () -> Unit,
     onNavigate: () -> Unit,
     onRoutesLoaded: (List<ScoredRoute>) -> Unit
@@ -1268,6 +1272,16 @@ private fun RouteOptionsScreen(
                 modifier = Modifier
                     .align(Alignment.TopStart)
                     .padding(start = 16.dp, top = 34.dp)
+            )
+            // Sits opposite the back button, and stays put when the panel
+            // collapses for the same reason it does. Changing a threshold here
+            // re-bands the routes already on screen.
+            SmallRoundButton(
+                text = "Filter",
+                onClick = onFilter,
+                modifier = Modifier
+                    .align(Alignment.TopEnd)
+                    .padding(end = 16.dp, top = 34.dp)
             )
         }
 
