@@ -1,8 +1,11 @@
 package com.example.sensenav.data
 
+import android.content.Context
 import android.text.Html
 import com.example.sensenav.model.LandmarkImage
 import com.example.sensenav.model.Refuge
+import com.google.gson.Gson
+import com.google.gson.reflect.TypeToken
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.sync.Mutex
@@ -13,6 +16,7 @@ import retrofit2.Retrofit
 import retrofit2.converter.gson.GsonConverterFactory
 import retrofit2.http.GET
 import retrofit2.http.Query
+import java.lang.reflect.Type
 import java.util.concurrent.TimeUnit
 
 /**
@@ -40,30 +44,75 @@ const val WIKIMEDIA_USER_AGENT = "SenseNav/1.0 (Android sensory-navigation proje
  * no confident name match returns null and the UI draws artwork instead.
  */
 class WikimediaImageRepository(
-    private val api: WikimediaApi = defaultApi()
+    context: Context,
+    private val api: WikimediaApi = defaultApi(),
+    private val now: () -> Long = System::currentTimeMillis
 ) {
+
+    /** [image] is null for a landmark Wikimedia had no confident match for. */
+    private data class CachedLookup(val image: LandmarkImage?, val fetchedAt: Long)
 
     // Wikimedia rate-limits anonymous clients - firing one request per visible
     // card in parallel earns a 429 and no images at all. Requests are therefore
-    // serialised and spaced, and every answer (including "no match") is cached
-    // so a card that scrolls back into view never refetches.
+    // serialised and spaced, and every answer is cached so a card that scrolls
+    // back into view never refetches.
     private val mutex = Mutex()
-    private val cache = mutableMapOf<String, LandmarkImage?>()
+    private val prefs = context.applicationContext
+        .getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+    private val gson = Gson()
+    private val cache: MutableMap<String, CachedLookup> = loadCache()
 
     suspend fun imageFor(refuge: Refuge): LandmarkImage? = withContext(Dispatchers.IO) {
         mutex.withLock {
-            if (cache.containsKey(refuge.id)) return@withLock cache[refuge.id]
+            val cached = cache[refuge.id]
+            if (cached != null && !cached.isStale()) return@withLock cached.image
 
             val result = runCatching { lookup(refuge) }
             delay(REQUEST_SPACING_MS)
 
             // Only a completed lookup is remembered. A throttled or dropped
             // request is not evidence that the place has no photograph, and
-            // caching it as one would strand that card on artwork for the rest
-            // of the session with no way to retry.
-            if (result.isSuccess) cache[refuge.id] = result.getOrNull()
-            result.getOrNull()
+            // recording it as one would strand that card on artwork.
+            if (result.isSuccess) {
+                cache[refuge.id] = CachedLookup(result.getOrNull(), now())
+                persistCache()
+                result.getOrNull()
+            } else {
+                // Offline or throttled: an expired entry still beats nothing.
+                cached?.image
+            }
         }
+    }
+
+    /**
+     * Hits are held far longer than misses. Which building a landmark is does
+     * not change, so a resolved photo stays good for a month - but Wikimedia
+     * gains articles and images continually, so "nothing here" is a statement
+     * with a much shorter shelf life. Neither is cached forever: a photo can be
+     * deleted or relicensed on Commons, and the credit shown beside it has to
+     * keep matching the file it belongs to.
+     */
+    private fun CachedLookup.isStale(): Boolean {
+        val age = now() - fetchedAt
+        return age >= if (image != null) HIT_TTL_MS else MISS_TTL_MS
+    }
+
+    private fun loadCache(): MutableMap<String, CachedLookup> {
+        val json = prefs.getString(KEY_CACHE, null)
+        if (json.isNullOrBlank()) return mutableMapOf()
+        // A cache written by an older build may no longer parse. Refetching is a
+        // slow start, not a failure, so a bad file is simply dropped.
+        val stored = runCatching {
+            gson.fromJson<MutableMap<String, CachedLookup>>(json, CACHE_TYPE)
+        }.getOrNull() ?: return mutableMapOf()
+
+        // Expired entries are pruned on load rather than accumulating for every
+        // landmark the user has ever been near.
+        return stored.filterValues { !it.isStale() }.toMutableMap()
+    }
+
+    private fun persistCache() {
+        runCatching { prefs.edit().putString(KEY_CACHE, gson.toJson(cache)).apply() }
     }
 
     private suspend fun lookup(refuge: Refuge): LandmarkImage? {
@@ -160,6 +209,17 @@ class WikimediaImageRepository(
 
     private companion object {
         const val BASE_URL = "https://en.wikipedia.org/"
+
+        const val PREFS_NAME = "sensenav_wikimedia_cache"
+        const val KEY_CACHE = "lookups"
+
+        /** A resolved photo: the building is not going to become another one. */
+        const val HIT_TTL_MS = 30L * 24 * 60 * 60 * 1000
+
+        /** No match yet - worth asking again once Wikimedia has had time to grow. */
+        const val MISS_TTL_MS = 7L * 24 * 60 * 60 * 1000
+
+        val CACHE_TYPE: Type = object : TypeToken<MutableMap<String, CachedLookup>>() {}.type
 
         /**
          * Metres around the refuge to consider an article as describing it.

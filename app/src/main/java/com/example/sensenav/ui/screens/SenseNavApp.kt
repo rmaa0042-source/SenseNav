@@ -205,12 +205,12 @@ fun SenseNavApp() {
     val refugeRepository = remember { RefugeRepository() }
     val landmarkRepository = remember { LandmarkRepository() }
     val searchRepository = remember { SearchRepository() }
-    // Held at the top so its lookup cache is shared by every screen.
-    val refugeImages = remember { WikimediaImageRepository() }
 
     // History is device-local, so it is read straight from disk at start-up
     // rather than fetched, and mirrored here so the screens recompose on change.
     val context = LocalContext.current
+    // Held at the top so its lookup cache is shared by every screen.
+    val refugeImages = remember(context) { WikimediaImageRepository(context) }
     val historyStore = remember(context) { HistoryStore(context) }
     val profileStore = remember(context) { ProfileStore(context) }
     // Held here rather than on the routes screen so saving a route on one screen
