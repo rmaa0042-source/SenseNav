@@ -33,10 +33,12 @@ import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
+import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.NavigationBar
 import androidx.compose.material3.NavigationBarItem
 import androidx.compose.material3.OutlinedTextField
+import androidx.compose.material3.RangeSlider
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Slider
 import androidx.compose.material3.SliderDefaults
@@ -56,8 +58,11 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.Path
+import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
@@ -125,7 +130,10 @@ import retrofit2.HttpException
 import java.io.IOException
 import java.time.LocalTime
 import java.time.format.DateTimeFormatter
+import kotlin.math.PI
+import kotlin.math.cos
 import kotlin.math.roundToInt
+import kotlin.math.sin
 import android.graphics.Color as AndroidColor
 import com.example.sensenav.data.RefugeRepository
 import com.example.sensenav.data.WarningRepository
@@ -141,6 +149,9 @@ private val SenseMuted = Color(0xFF798293)
 private val SensePink = Color(0xFFFF4F86)
 private val SenseGreen = Color(0xFF1B9F5A)
 private val ScreenBg = Color(0xFFF7F9FD)
+private val OnboardingBg = Color(0xFFE4DDEC)
+private val OnboardingBorder = Color(0xFFE7EAF0)
+private val StarGold = Color(0xFFE6AD00)
 
 // Fallbacks only - the API supplies a colour per route and it takes precedence.
 private val SenseRiskLow = Color(0xFF3B8BD4)
@@ -205,6 +216,7 @@ private sealed interface RoutesUiState {
 
 private enum class AppScreen {
     Splash,
+    Onboarding,
     Home,
     NearbyMap,
     Search,
@@ -228,6 +240,30 @@ private data class NavigationPlan(
     val destination: GeoPoint,
     val destinationName: String
 )
+
+private enum class OnboardingThreshold(
+    val label: String,
+    val lowMaxPedestrians: Int,
+    val mediumMaxPedestrians: Int
+) {
+    LowQuiet("Low Quiet", 30, 100),
+    Medium("Medium", 50, 160),
+    High("High", 80, 250);
+
+    fun toFilter(radiusKm: Int): SensoryFilter = SensoryFilter(
+        lowMaxPedestrians = lowMaxPedestrians,
+        mediumMaxPedestrians = mediumMaxPedestrians,
+        radiusKm = radiusKm
+    ).normalised()
+
+    companion object {
+        fun from(filter: SensoryFilter): OnboardingThreshold = when {
+            filter.lowMaxPedestrians >= High.lowMaxPedestrians -> High
+            filter.lowMaxPedestrians >= Medium.lowMaxPedestrians -> Medium
+            else -> LowQuiet
+        }
+    }
+}
 
 @Composable
 fun SenseNavApp() {
@@ -438,8 +474,29 @@ fun SenseNavApp() {
                 // Replaces the splash rather than stacking on it: once it has
                 // cleared there is nothing to go back to.
                 backStack.clear()
-                backStack.add(AppScreen.Home)
+                backStack.add(
+                    if (profileStore.hasCompletedOnboarding()) {
+                        AppScreen.Home
+                    } else {
+                        AppScreen.Onboarding
+                    }
+                )
             })
+            AppScreen.Onboarding -> OnboardingScreen(
+                initialSensitivityRange = profileStore.sensitivityRange(),
+                initialThreshold = OnboardingThreshold.from(sensoryFilter),
+                initialPreferenceRating = profileStore.sensoryPreferenceRating(),
+                onGetStarted = { name, sensitivityRange, threshold, preferenceRating ->
+                    displayName = profileStore.saveOnboardingProfile(
+                        name = name.ifBlank { displayName },
+                        sensitivityRange = sensitivityRange,
+                        preferenceRating = preferenceRating
+                    )
+                    sensoryFilter = filterStore.save(threshold.toFilter(sensoryFilter.radiusKm))
+                    backStack.clear()
+                    backStack.add(AppScreen.Home)
+                }
+            )
             AppScreen.Home -> HomeScreen(
                 refuges = refuges,
                 displayName = displayName,
@@ -615,60 +672,433 @@ fun SenseNavApp() {
 @Composable
 private fun SplashScreen(onFinished: () -> Unit) {
     LaunchedEffect(Unit) {
-        delay(900)
+        delay(1100)
         onFinished()
     }
 
     Box(
         modifier = Modifier
             .fillMaxSize()
-            .background(Color(0xFF9C90AE))
+            .background(Color.White)
     ) {
         Column(
-            modifier = Modifier.align(Alignment.Center),
+            modifier = Modifier
+                .align(Alignment.TopCenter)
+                .fillMaxWidth()
+                .padding(top = 126.dp, start = 26.dp, end = 26.dp),
             horizontalAlignment = Alignment.CenterHorizontally
         ) {
-            Text(
-                text = "M",
-                color = Color.White,
-                fontSize = 96.sp,
-                fontWeight = FontWeight.Black
-            )
-            Spacer(modifier = Modifier.height(20.dp))
-            Text(
-                text = "SenseNav",
-                color = Color.White,
-                fontSize = 24.sp,
-                fontWeight = FontWeight.Medium
-            )
+            SenseNavBrandLockup()
         }
-        Canvas(
+
+        SplashCityIllustration(
             modifier = Modifier
                 .align(Alignment.BottomCenter)
                 .fillMaxWidth()
-                .height(210.dp)
+                .fillMaxHeight(0.58f)
+        )
+    }
+}
+
+@Composable
+private fun SenseNavBrandLockup(modifier: Modifier = Modifier) {
+    Row(
+        modifier = modifier,
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.Center
+    ) {
+        Box(
+            modifier = Modifier
+                .size(90.dp)
+                .clip(CircleShape)
+                .background(Brush.linearGradient(listOf(Color(0xFF17135F), Color(0xFF8B63F4)))),
+            contentAlignment = Alignment.Center
         ) {
-            val ink = Color(0xFF241A35)
-            drawCircle(
-                color = ink.copy(alpha = 0.12f),
-                center = Offset(size.width * 0.75f, size.height * 0.70f),
-                radius = 68f
+            Text(
+                text = "S",
+                color = Color.White,
+                fontSize = 62.sp,
+                fontWeight = FontWeight.Black
             )
-            drawCircle(
-                color = ink,
-                center = Offset(size.width * 0.50f, size.height * 0.38f),
-                radius = 76f,
-                style = androidx.compose.ui.graphics.drawscope.Stroke(8f)
+            Text(
+                text = "N",
+                modifier = Modifier.align(Alignment.CenterEnd).padding(end = 12.dp),
+                color = Color.White,
+                fontSize = 34.sp,
+                fontWeight = FontWeight.Bold
             )
-            drawCircle(
-                color = ink,
-                center = Offset(size.width * 0.50f, size.height * 0.38f),
-                radius = 30f,
-                style = androidx.compose.ui.graphics.drawscope.Stroke(7f)
+            Box(
+                modifier = Modifier
+                    .align(Alignment.TopEnd)
+                    .padding(top = 17.dp, end = 17.dp)
+                    .size(12.dp)
+                    .clip(CircleShape)
+                    .background(Color.White)
             )
-            drawLine(ink, Offset(size.width * 0.22f, size.height * 0.72f), Offset(size.width * 0.43f, size.height * 0.46f), 8f)
-            drawLine(ink, Offset(size.width * 0.66f, size.height * 0.38f), Offset(size.width * 0.66f, size.height * 0.78f), 8f)
         }
+        Spacer(modifier = Modifier.width(18.dp))
+        Text(
+            text = "SenseNav",
+            color = Color(0xFF17135F),
+            fontSize = 42.sp,
+            fontWeight = FontWeight.Black,
+            maxLines = 1
+        )
+    }
+}
+
+@Composable
+private fun SplashCityIllustration(modifier: Modifier = Modifier) {
+    Canvas(modifier = modifier) {
+        val w = size.width
+        val h = size.height
+        val ink = Color(0xFF111111)
+        val hillDark = Color(0xFF3E3E3E)
+        val hillMid = Color(0xFF6A6A6A)
+        val hillLight = Color(0xFFB9B9B9)
+
+        val buildingStroke = Stroke(width = 6f, cap = androidx.compose.ui.graphics.StrokeCap.Round)
+        val detailStroke = Stroke(width = 4f, cap = androidx.compose.ui.graphics.StrokeCap.Round)
+
+        drawLine(ink, Offset(0f, h * 0.48f), Offset(w * 0.23f, h * 0.48f), 6f)
+        drawRect(
+            color = ink,
+            topLeft = Offset(-w * 0.02f, h * 0.48f),
+            size = Size(w * 0.23f, h * 0.32f),
+            style = buildingStroke
+        )
+        for (slot in 0..3) {
+            val x = w * (0.03f + slot * 0.045f)
+            drawLine(ink, Offset(x, h * 0.57f), Offset(x, h * 0.64f), 5f)
+            drawLine(ink, Offset(x, h * 0.70f), Offset(x, h * 0.76f), 5f)
+        }
+
+        val pinTop = Offset(w * 0.50f, h * 0.40f)
+        drawCircle(ink, w * 0.19f, pinTop, style = Stroke(width = 9f))
+        drawCircle(Color.White, w * 0.105f, pinTop)
+        drawCircle(ink, w * 0.095f, pinTop, style = Stroke(width = 8f))
+        val pinTail = Path().apply {
+            moveTo(w * 0.33f, h * 0.50f)
+            quadraticTo(w * 0.50f, h * 0.82f, w * 0.67f, h * 0.50f)
+        }
+        drawPath(pinTail, ink, style = Stroke(width = 9f, cap = androidx.compose.ui.graphics.StrokeCap.Round))
+        drawLine(ink, Offset(w * 0.46f, h * 0.15f), Offset(w * 0.44f, h * 0.08f), 6f)
+        drawLine(ink, Offset(w * 0.54f, h * 0.15f), Offset(w * 0.56f, h * 0.08f), 6f)
+        drawLine(ink, Offset(w * 0.61f, h * 0.18f), Offset(w * 0.67f, h * 0.13f), 6f)
+        drawCircle(ink, w * 0.025f, Offset(w * 0.28f, h * 0.20f))
+        drawLine(ink, Offset(w * 0.78f, h * 0.18f), Offset(w * 0.82f, h * 0.14f), 6f)
+        drawLine(ink, Offset(w * 0.78f, h * 0.14f), Offset(w * 0.82f, h * 0.18f), 6f)
+
+        drawRect(
+            color = ink,
+            topLeft = Offset(w * 0.76f, h * 0.34f),
+            size = Size(w * 0.16f, h * 0.30f),
+            style = buildingStroke
+        )
+        drawLine(ink, Offset(w * 0.82f, h * 0.41f), Offset(w * 0.82f, h * 0.59f), 7f)
+        drawLine(ink, Offset(w * 0.88f, h * 0.41f), Offset(w * 0.88f, h * 0.59f), 7f)
+
+        val darkHill = Path().apply {
+            moveTo(0f, h * 0.78f)
+            cubicTo(w * 0.12f, h * 0.56f, w * 0.22f, h * 0.60f, w * 0.38f, h * 0.76f)
+            cubicTo(w * 0.56f, h * 0.94f, w * 0.75f, h * 0.53f, w, h * 0.65f)
+            lineTo(w, h)
+            lineTo(0f, h)
+            close()
+        }
+        drawPath(darkHill, hillDark)
+
+        val midHill = Path().apply {
+            moveTo(w * 0.50f, h)
+            cubicTo(w * 0.52f, h * 0.72f, w * 0.70f, h * 0.67f, w * 0.86f, h * 0.77f)
+            cubicTo(w * 0.93f, h * 0.81f, w * 0.98f, h * 0.78f, w, h * 0.76f)
+            lineTo(w, h)
+            close()
+        }
+        drawPath(midHill, hillMid)
+
+        val lightHill = Path().apply {
+            moveTo(w * 0.13f, h)
+            cubicTo(w * 0.26f, h * 0.90f, w * 0.42f, h * 0.82f, w * 0.58f, h * 0.86f)
+            cubicTo(w * 0.70f, h * 0.89f, w * 0.78f, h * 0.95f, w * 0.86f, h)
+            close()
+        }
+        drawPath(lightHill, hillLight)
+
+        drawSwirl(Offset(w * 0.18f, h * 0.76f), w * 0.085f, Color(0xFFBDBDBD))
+        drawSwirl(Offset(w * 0.58f, h * 0.77f), w * 0.08f, Color(0xFFBDBDBD))
+        drawSwirl(Offset(w * 0.88f, h * 0.73f), w * 0.085f, Color(0xFFAFAFAF))
+        drawLine(hillLight, Offset(w * 0.35f, h * 0.88f), Offset(w * 0.31f, h * 0.93f), 5f)
+        drawLine(hillLight, Offset(w * 0.40f, h * 0.87f), Offset(w * 0.36f, h * 0.92f), 5f)
+        drawLine(hillLight, Offset(w * 0.47f, h * 0.87f), Offset(w * 0.43f, h * 0.93f), 5f)
+        drawLine(Color.White.copy(alpha = 0.55f), Offset(w * 0.65f, h * 0.90f), Offset(w * 0.61f, h * 0.95f), 5f)
+        drawCircle(Color(0xFFBABABA), w * 0.014f, Offset(w * 0.72f, h * 0.78f))
+        drawCircle(Color(0xFFBABABA), w * 0.014f, Offset(w * 0.84f, h * 0.78f))
+        drawCircle(Color(0xFFBABABA), w * 0.014f, Offset(w * 0.94f, h * 0.66f))
+        drawPath(
+            Path().apply {
+                moveTo(w * 0.34f, h * 0.76f)
+                cubicTo(w * 0.37f, h * 0.71f, w * 0.40f, h * 0.81f, w * 0.43f, h * 0.75f)
+            },
+            Color(0xFFBDBDBD),
+            style = detailStroke
+        )
+    }
+}
+
+private fun androidx.compose.ui.graphics.drawscope.DrawScope.drawSwirl(
+    centre: Offset,
+    radius: Float,
+    color: Color
+) {
+    val points = (0..28).map { index ->
+        val t = index / 28f
+        val angle = t * 2.8f * PI.toFloat()
+        val r = radius * t
+        Offset(
+            x = centre.x + cos(angle) * r,
+            y = centre.y + sin(angle) * r
+        )
+    }
+    val path = Path().apply {
+        points.firstOrNull()?.let { moveTo(it.x, it.y) }
+        points.drop(1).forEach { lineTo(it.x, it.y) }
+    }
+    drawPath(path, color, style = Stroke(width = radius * 0.18f, cap = androidx.compose.ui.graphics.StrokeCap.Round))
+}
+
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+private fun OnboardingScreen(
+    initialSensitivityRange: ClosedFloatingPointRange<Float>,
+    initialThreshold: OnboardingThreshold,
+    initialPreferenceRating: Int,
+    onGetStarted: (
+        name: String,
+        sensitivityRange: ClosedFloatingPointRange<Float>,
+        threshold: OnboardingThreshold,
+        preferenceRating: Int
+    ) -> Unit
+) {
+    var name by remember { mutableStateOf("") }
+    var sensitivityRange by remember {
+        mutableStateOf(initialSensitivityRange.start.coerceIn(0f, 1f)..initialSensitivityRange.endInclusive.coerceIn(0f, 1f))
+    }
+    var threshold by remember { mutableStateOf(initialThreshold) }
+    var preferenceRating by remember { mutableStateOf(initialPreferenceRating.coerceIn(1, 5)) }
+
+    Box(
+        modifier = Modifier
+            .fillMaxSize()
+            .background(OnboardingBg)
+    ) {
+        Column(
+            modifier = Modifier
+                .align(Alignment.BottomCenter)
+                .fillMaxWidth()
+                .fillMaxHeight(0.94f)
+                .clip(RoundedCornerShape(topStart = 34.dp, topEnd = 34.dp))
+                .background(Color.White)
+                .padding(horizontal = 28.dp, vertical = 14.dp)
+        ) {
+            Box(
+                modifier = Modifier
+                    .align(Alignment.CenterHorizontally)
+                    .width(86.dp)
+                    .height(6.dp)
+                    .clip(RoundedCornerShape(6.dp))
+                    .background(Color(0xFFE1E6EB))
+            )
+            Spacer(modifier = Modifier.height(32.dp))
+            Text(
+                text = "Set Your Preferences",
+                modifier = Modifier.align(Alignment.CenterHorizontally),
+                color = SenseInk,
+                fontSize = 24.sp,
+                fontWeight = FontWeight.Black
+            )
+            Spacer(modifier = Modifier.height(32.dp))
+
+            Column(
+                modifier = Modifier
+                    .weight(1f)
+                    .verticalScroll(rememberScrollState())
+            ) {
+                Text("Your Name", color = SenseInk, fontSize = 18.sp, fontWeight = FontWeight.Medium)
+                Spacer(modifier = Modifier.height(12.dp))
+                OutlinedTextField(
+                    value = name,
+                    onValueChange = { name = it },
+                    modifier = Modifier.fillMaxWidth(),
+                    placeholder = { Text("e.g. Freddy", color = SenseMuted) },
+                    singleLine = true,
+                    shape = RoundedCornerShape(18.dp),
+                    colors = OutlinedTextFieldDefaults.colors(
+                        focusedBorderColor = OnboardingBorder,
+                        unfocusedBorderColor = OnboardingBorder,
+                        cursorColor = SenseBlue
+                    )
+                )
+
+                Spacer(modifier = Modifier.height(34.dp))
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Text(
+                        text = "Sensory Sensitivity Level",
+                        modifier = Modifier.weight(1f),
+                        color = SenseInk,
+                        fontSize = 16.sp,
+                        fontWeight = FontWeight.Medium
+                    )
+                    Text("Low - High", color = Color(0xFFB7BDCA), fontSize = 15.sp)
+                }
+                Spacer(modifier = Modifier.height(12.dp))
+                RangeSlider(
+                    value = sensitivityRange,
+                    onValueChange = { selected ->
+                        val start = selected.start.coerceIn(0f, 0.90f)
+                        val end = selected.endInclusive.coerceIn(start + 0.10f, 1f)
+                        sensitivityRange = start..end
+                    },
+                    valueRange = 0f..1f,
+                    colors = SliderDefaults.colors(
+                        thumbColor = SenseBlue,
+                        activeTrackColor = SenseBlue,
+                        inactiveTrackColor = Color(0xFFE1E6EB)
+                    )
+                )
+
+                Spacer(modifier = Modifier.height(24.dp))
+                Text(
+                    text = "Sensory Threshold",
+                    color = SenseInk,
+                    fontSize = 18.sp,
+                    fontWeight = FontWeight.Medium
+                )
+                Spacer(modifier = Modifier.height(18.dp))
+                Row(horizontalArrangement = Arrangement.spacedBy(14.dp)) {
+                    OnboardingThreshold.entries.forEach { option ->
+                        ThresholdOptionButton(
+                            text = option.label,
+                            selected = threshold == option,
+                            modifier = Modifier.weight(1f),
+                            onClick = { threshold = option }
+                        )
+                    }
+                }
+
+                Spacer(modifier = Modifier.height(34.dp))
+                Text(
+                    text = "Sensory Preference",
+                    color = SenseInk,
+                    fontSize = 18.sp,
+                    fontWeight = FontWeight.Medium
+                )
+                Spacer(modifier = Modifier.height(18.dp))
+                Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                    (5 downTo 1).forEach { rating ->
+                        RatingPreferenceButton(
+                            rating = rating,
+                            selected = preferenceRating == rating,
+                            modifier = Modifier.weight(1f),
+                            onClick = { preferenceRating = rating }
+                        )
+                    }
+                }
+            }
+
+            Spacer(modifier = Modifier.height(18.dp))
+            Button(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .height(58.dp),
+                onClick = { onGetStarted(name.trim(), sensitivityRange, threshold, preferenceRating) },
+                colors = ButtonDefaults.buttonColors(containerColor = SenseBlue),
+                shape = RoundedCornerShape(12.dp)
+            ) {
+                Text("Get Started", color = Color.White, fontSize = 18.sp, fontWeight = FontWeight.Bold)
+            }
+            Spacer(modifier = Modifier.height(18.dp))
+        }
+    }
+}
+
+@Composable
+private fun ThresholdOptionButton(
+    text: String,
+    selected: Boolean,
+    modifier: Modifier = Modifier,
+    onClick: () -> Unit
+) {
+    Box(
+        modifier = modifier
+            .height(58.dp)
+            .clip(RoundedCornerShape(10.dp))
+            .background(if (selected) SenseBlue else Color.White)
+            .border(
+                width = 1.dp,
+                color = if (selected) SenseBlue else OnboardingBorder,
+                shape = RoundedCornerShape(10.dp)
+            )
+            .clickable(onClick = onClick),
+        contentAlignment = Alignment.Center
+    ) {
+        Text(
+            text = text,
+            color = if (selected) Color.White else SenseBlue,
+            fontSize = 16.sp,
+            fontWeight = if (selected) FontWeight.Bold else FontWeight.Medium,
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis
+        )
+    }
+}
+
+@Composable
+private fun RatingPreferenceButton(
+    rating: Int,
+    selected: Boolean,
+    modifier: Modifier = Modifier,
+    onClick: () -> Unit
+) {
+    Box(
+        modifier = modifier
+            .height(60.dp)
+            .clip(RoundedCornerShape(14.dp))
+            .background(Color.White)
+            .border(
+                width = if (selected) 1.5.dp else 1.dp,
+                color = if (selected) SenseBlue else OnboardingBorder,
+                shape = RoundedCornerShape(14.dp)
+            )
+            .clickable(onClick = onClick),
+        contentAlignment = Alignment.Center
+    ) {
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            StarIcon(modifier = Modifier.size(19.dp), color = StarGold)
+            Spacer(modifier = Modifier.width(5.dp))
+            Text(rating.toString(), color = SenseInk, fontSize = 14.sp, fontWeight = FontWeight.Medium)
+        }
+    }
+}
+
+@Composable
+private fun StarIcon(modifier: Modifier = Modifier, color: Color) {
+    Canvas(modifier = modifier) {
+        val outer = minOf(size.width, size.height) / 2f
+        val inner = outer * 0.52f
+        val centre = Offset(size.width / 2f, size.height / 2f)
+        val path = Path()
+        for (index in 0 until 10) {
+            val radius = if (index % 2 == 0) outer else inner
+            val angle = (-90f + index * 36f) * PI.toFloat() / 180f
+            val point = Offset(
+                x = centre.x + cos(angle) * radius,
+                y = centre.y + sin(angle) * radius
+            )
+            if (index == 0) path.moveTo(point.x, point.y) else path.lineTo(point.x, point.y)
+        }
+        path.close()
+        drawPath(path, color)
     }
 }
 
