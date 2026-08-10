@@ -95,7 +95,6 @@ import com.example.sensenav.data.FilterStore
 import com.example.sensenav.data.HistoryStore
 import com.example.sensenav.data.LandmarkRepository
 import com.example.sensenav.data.LocationProvider
-import com.example.sensenav.data.MockSenseNavRepository
 import com.example.sensenav.data.PlaceGeocoder
 import com.example.sensenav.data.ProfileStore
 import com.example.sensenav.data.RouteRepository
@@ -122,6 +121,7 @@ import com.example.sensenav.ui.refuge.LocalRefugeImages
 import com.example.sensenav.ui.refuge.RefugeImage
 import com.example.sensenav.ui.refuge.rememberRefugeImage
 import com.example.sensenav.ui.map.MapRoute
+import com.example.sensenav.ui.map.MelbourneCbd
 import com.example.sensenav.ui.map.SenseNavMap
 import com.example.sensenav.ui.map.rememberSenseNavCameraState
 import com.example.sensenav.ui.map.toLatLng
@@ -140,12 +140,13 @@ import kotlin.math.cos
 import kotlin.math.roundToInt
 import kotlin.math.sin
 import android.graphics.Color as AndroidColor
-import com.example.sensenav.data.RefugeRepository
-import com.example.sensenav.data.WarningRepository
-import com.example.sensenav.model.WarningInfo
-import com.example.sensenav.data.SearchRepository
 
 private const val TAG = "SenseNav"
+
+// The two states the location header can be in before it names a place. Held
+// as constants because the empty-state screens branch on them.
+private const val LocationFindingLabel = "Finding your location..."
+private const val LocationUnavailableLabel = "Location unavailable"
 
 private val SenseBlue = Color(0xFF2F5FBD)
 private val SenseSoftBlue = Color(0xFFEAF2FF)
@@ -200,10 +201,20 @@ private fun Refuge.distanceLabel(): String? = distanceKm?.let { km ->
 
 private class PlaceNotFoundException(val query: String) : Exception()
 
+/**
+ * No device fix and no pinned place, so there is no origin to route from. Raised
+ * rather than defaulted: a route from a point the user is not standing on is
+ * worse than no route at all.
+ */
+private class OriginUnavailableException : Exception()
+
 private fun Throwable.toUserMessage(): String = when (this) {
     is PlaceNotFoundException ->
         "Couldn't find \"$query\". Try a fuller address, or clear the box to " +
             "route from your current location."
+    is OriginUnavailableException ->
+        "Can't tell where you are. Turn on location, or type a starting point " +
+            "in the From box."
     is HttpException -> "The routing service returned an error (HTTP ${code()})."
     is IOException ->
         "Can't reach the routing service. Check your connection, or confirm the " +
@@ -250,7 +261,6 @@ private data class NavigationPlan(
 
 @Composable
 fun SenseNavApp() {
-    val repository = remember { MockSenseNavRepository() }
     // A back stack rather than a single current screen, so that both the system
     // back gesture and the on-screen back buttons return to wherever the user
     // actually came from instead of a fixed parent for each page.
@@ -275,10 +285,7 @@ fun SenseNavApp() {
             Unit
         }
     }
-    val warningRepository = remember { WarningRepository() }
-    val refugeRepository = remember { RefugeRepository() }
     val landmarkRepository = remember { LandmarkRepository() }
-    val searchRepository = remember { SearchRepository() }
 
     // History is device-local, so it is read straight from disk at start-up
     // rather than fetched, and mirrored here so the screens recompose on change.
@@ -314,11 +321,10 @@ fun SenseNavApp() {
     var recentlyViewed by remember { mutableStateOf(historyStore.recentlyViewed()) }
 
     var refuges by remember { mutableStateOf<List<Refuge>>(emptyList()) }
-    var warnings by remember { mutableStateOf<List<WarningInfo>>(emptyList()) }
     // Shown under the user's name on the home screen. Starts as a status line
     // rather than a placeholder suburb, so it never claims a location we have
     // not actually read from the device.
-    var locationLabel by remember { mutableStateOf("Finding your location...") }
+    var locationLabel by remember { mutableStateOf(LocationFindingLabel) }
 
     // Both the label and the refuge list are anchored on the device position, so
     // permission is asked for here rather than waiting for the map screen to do
@@ -349,72 +355,60 @@ fun SenseNavApp() {
 
     // Recommendations come from the Calm-rated entries in the API's landmark
     // dataset, anchored on the pinned location or, failing that, where the user
-    // actually is. Outside the dataset's coverage that query legitimately
-    // returns nothing, so the older refuge endpoint and then the local catalogue
-    // stand in rather than leaving the home screen empty. Re-runs when the pin
-    // changes or permission is granted, so neither leaves the list stale.
+    // actually is. Outside the dataset's coverage that query legitimately returns
+    // nothing, and nothing is what the home screen then shows. Re-runs when the
+    // pin changes or permission is granted, so neither leaves the list stale.
     LaunchedEffect(hasLocationPermission, savedPlace, locationRefresh, sensoryFilter.radiusKm) {
         val pinned = savedPlace
         val near = if (pinned != null) {
             locationLabel = pinned.label
             GeoPoint(pinned.latitude, pinned.longitude)
         } else {
-            locationLabel = "Finding your location..."
+            locationLabel = LocationFindingLabel
             val current = locationProvider.currentLocation()
             locationLabel = when {
                 // Permission denied, location off, or no fix yet - say so instead
-                // of naming the fallback point, which is not where the user is.
-                current == null -> "Location unavailable"
+                // of naming a stand-in point, which is not where the user is.
+                current == null -> LocationUnavailableLabel
                 // Coordinates are a poor label but still honest when the device's
                 // geocoder has no name for the point (offline, or unmapped area).
                 else -> placeGeocoder.describe(current) ?: current.toCoordinateLabel()
             }
-            current ?: repository.defaultOrigin
+            current
         }
+
+        // No pin and no fix from the device leaves nothing to search around.
+        // Better an empty list the screens explain than results centred on a
+        // point the user was never at.
+        if (near == null) {
+            Log.w(TAG, "No pinned place and no device fix - refuge list left empty")
+            refuges = emptyList()
+            return@LaunchedEffect
+        }
+
         val anchorSource = if (pinned != null) "pinned '${pinned.label}'" else "device"
         Log.i(TAG, "Loading refuges near ${near.latitude},${near.longitude} (from $anchorSource)")
 
-        val nearby = try {
+        // The landmark API is the only source of refuges. A failure or an empty
+        // answer leaves the list empty and the screens say so, rather than
+        // substituting a catalogue that would look like live data.
+        refuges = try {
             landmarkRepository.getLowSensoryRefuges(
                 near = near,
                 radiusKm = sensoryFilter.radiusKm.toDouble()
-            )
+            ).also { Log.i(TAG, "Loaded ${it.size} calm landmarks from the API") }
         } catch (cancellation: CancellationException) {
             throw cancellation
         } catch (e: Exception) {
-            // Silently falling back here is what makes a dead API look like a
-            // working app serving stale data, so every drop-through is logged.
-            Log.w(TAG, "Landmark API failed, falling back", e)
+            Log.w(TAG, "Landmark API failed - showing no refuges", e)
             emptyList()
         }
-
-        if (nearby.isEmpty()) {
-            Log.w(TAG, "No calm landmarks near the user - falling back to the refuge endpoint")
-        } else {
-            Log.i(TAG, "Loaded ${nearby.size} calm landmarks from the API")
-        }
-
-        refuges = nearby.ifEmpty {
-            try {
-                refugeRepository.getRefuges()
-            } catch (cancellation: CancellationException) {
-                throw cancellation
-            } catch (e: Exception) {
-                Log.w(TAG, "Refuge endpoint failed, using the local catalogue", e)
-                repository.getRefuges()
-            }
-        }
     }
 
-    LaunchedEffect(Unit) {
-        warnings = try {
-            warningRepository.getWarnings()
-        } catch (e: Exception) {
-            repository.getWarnings()
-        }
-    }
-
-    var destination by remember { mutableStateOf(repository.getRefuges().first()) }
+    // Null until the landmark API answers. There is no local catalogue to fall
+    // back on, so "no destination yet" is a state the screens have to handle
+    // rather than something a seed value can paper over.
+    var destination by remember { mutableStateOf<Refuge?>(null) }
 
     LaunchedEffect(refuges) {
         if (refuges.isNotEmpty()) {
@@ -502,25 +496,38 @@ fun SenseNavApp() {
                 // whichever one the user opens shows what the other one set.
                 onFilter = { editingFilter = true }
             )
-            AppScreen.NearbyMap -> NearbyMapScreen(
-                refuges = refuges,
-                initialRefuge = destination,
-                onBack = goBack,
-                onSearch = { navigateTo(AppScreen.Search) },
-                onFilter = { editingFilter = true },
-                onNavigate = { refuge ->
-                    openRefuge(refuge)
-                    navigateTo(AppScreen.Routes)
-                },
-                onWarning = {
-                    warningFocus = null
-                    navigateTo(AppScreen.Warning)
+            AppScreen.NearbyMap -> {
+                val focus = destination
+                if (focus == null) {
+                    // No refuges came back, so there are no markers to draw and
+                    // nothing for the map to centre on.
+                    NoRefugesScreen(
+                        locationLabel = locationLabel,
+                        radiusKm = sensoryFilter.radiusKm,
+                        onBack = goBack,
+                        onRetry = { locationRefresh++ }
+                    )
+                } else {
+                    NearbyMapScreen(
+                        refuges = refuges,
+                        initialRefuge = focus,
+                        onBack = goBack,
+                        onSearch = { navigateTo(AppScreen.Search) },
+                        onFilter = { editingFilter = true },
+                        onNavigate = { refuge ->
+                            openRefuge(refuge)
+                            navigateTo(AppScreen.Routes)
+                        },
+                        onWarning = {
+                            warningFocus = null
+                            navigateTo(AppScreen.Warning)
+                        }
+                    )
                 }
-            )
+            }
             AppScreen.Search -> SearchScreen(
-                repository = repository,
                 refuges = refuges,
-                searchRepository = searchRepository,
+                geocoder = placeGeocoder,
                 origin = startPoint,
                 onOriginChange = { startPoint = it },
                 recentSearches = recentSearches,
@@ -549,11 +556,10 @@ fun SenseNavApp() {
             AppScreen.Routes -> RouteOptionsScreen(
                 destination = destination,
                 pinnedOrigin = savedPlace?.let { GeoPoint(it.latitude, it.longitude) },
-                defaultOrigin = repository.defaultOrigin,
                 savedRoutes = savedRoutes,
                 onToggleSavedRoute = { savedRoutes = savedRouteStore.toggle(it) },
                 initialOrigin = startPoint,
-                initialDestination = endPoint.ifBlank { destination.name },
+                initialDestination = endPoint.ifBlank { destination?.name.orEmpty() },
                 sensoryFilter = sensoryFilter,
                 onBack = goBack,
                 onFilter = { editingFilter = true },
@@ -587,14 +593,15 @@ fun SenseNavApp() {
                 }
             }
             AppScreen.Warning -> WarningScreen(
-                warnings = warnings,
                 routes = loadedRoutes.ifEmpty {
                     navigationPlan?.let { listOf(it.route) + it.alternatives }.orEmpty()
                 },
                 focusRoute = warningFocus,
                 filter = sensoryFilter,
                 refuges = refuges,
-                destinationName = navigationPlan?.destinationName ?: destination.name,
+                destinationName = navigationPlan?.destinationName
+                    ?: destination?.name
+                    ?: "your destination",
                 onBack = goBack,
                 onReroute = { navigateTo(AppScreen.Routes) },
                 onUseRoute = { route ->
@@ -1355,6 +1362,79 @@ private fun HomeScreen(
     }
 }
 
+/**
+ * Stands in for the nearby map when the landmark API has produced nothing to put
+ * on it. Names which of the three causes applies, because the remedy differs:
+ * waiting on a fix, a fix that never came, or a real answer of "nothing here".
+ */
+@Composable
+private fun NoRefugesScreen(
+    locationLabel: String,
+    radiusKm: Int,
+    onBack: () -> Unit,
+    onRetry: () -> Unit
+) {
+    val pending = locationLabel == LocationFindingLabel
+    val locationKnown = !pending && locationLabel != LocationUnavailableLabel
+
+    Column(
+        modifier = Modifier
+            .fillMaxSize()
+            .background(Color.White)
+            .padding(horizontal = 20.dp, vertical = 28.dp)
+    ) {
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            SmallRoundButton("<", onBack)
+            Spacer(modifier = Modifier.width(12.dp))
+            Text(
+                text = "Nearby calm places",
+                color = SenseInk,
+                fontSize = 18.sp,
+                fontWeight = FontWeight.Bold
+            )
+        }
+
+        Spacer(modifier = Modifier.height(24.dp))
+        Text(
+            text = when {
+                pending -> "Looking for calm places near you"
+                locationKnown -> "Nothing calm within $radiusKm km"
+                else -> "We don't know where you are yet"
+            },
+            color = SenseInk,
+            fontSize = 20.sp,
+            fontWeight = FontWeight.Bold
+        )
+        Spacer(modifier = Modifier.height(8.dp))
+        Text(
+            text = when {
+                pending -> "Waiting on a location fix from your device."
+                locationKnown ->
+                    "The landmark dataset has no Calm-rated places inside your " +
+                        "search range of $locationLabel. A wider range may reach some."
+                else ->
+                    "Calm places are found around your location. Allow location " +
+                        "access, or pin a place from the home screen, and they will load."
+            },
+            color = SenseMuted,
+            fontSize = 13.sp,
+            lineHeight = 19.sp
+        )
+
+        if (!pending) {
+            Spacer(modifier = Modifier.height(24.dp))
+            Button(
+                modifier = Modifier.fillMaxWidth(),
+                onClick = onRetry,
+                colors = ButtonDefaults.buttonColors(containerColor = SenseBlue),
+                shape = RoundedCornerShape(14.dp)
+            ) {
+                Text("Try again", color = Color.White, fontWeight = FontWeight.Bold)
+            }
+        }
+    }
+}
+
 @Composable
 private fun NearbyMapScreen(
     refuges: List<Refuge>,
@@ -1455,9 +1535,8 @@ private fun NearbyMapScreen(
 
 @Composable
 private fun SearchScreen(
-    repository: MockSenseNavRepository,
     refuges: List<Refuge>,
-    searchRepository: SearchRepository,
+    geocoder: PlaceGeocoder,
     origin: String,
     onOriginChange: (String) -> Unit,
     recentSearches: List<SearchResult>,
@@ -1477,9 +1556,7 @@ private fun SearchScreen(
     var query by remember { mutableStateOf("") }
     var submittedQuery by remember { mutableStateOf("") }
     var searching by remember { mutableStateOf(false) }
-    var backendSearchResults by remember {
-        mutableStateOf<List<SearchResult>>(emptyList())
-    }
+    var searchResults by remember { mutableStateOf<List<SearchResult>>(emptyList()) }
     val keyboard = LocalSoftwareKeyboardController.current
     val destinationFocus = remember { FocusRequester() }
 
@@ -1494,33 +1571,57 @@ private fun SearchScreen(
         if (query.isBlank()) submittedQuery = ""
     }
 
-    LaunchedEffect(submittedQuery) {
+    // Two real sources, no search endpoint in between: the calm landmarks already
+    // loaded for this area are matched by name, and the device's own geocoder
+    // resolves anything else the user types into a place they can route to.
+    LaunchedEffect(submittedQuery, refuges) {
         // "My location" is a chosen marker, not a place to look up, so it leaves
         // the list on the history rather than reporting no matches for itself.
         if (submittedQuery.isBlank() || submittedQuery.isMyLocation()) {
-            backendSearchResults = emptyList()
+            searchResults = emptyList()
             searching = false
-        } else {
-            searching = true
-            backendSearchResults = try {
-                searchRepository.search(submittedQuery).map {
-                    SearchResult(
-                        id = it.id.toString(),
-                        title = it.name,
-                        subtitle = it.address,
-                        type = SearchResultType.Refuge,
-                        sensoryLabel = it.sensoryLevel
-                    )
-                }
-            } catch (e: Exception) {
-                emptyList()
-            }
-            searching = false
+            return@LaunchedEffect
         }
+
+        searching = true
+        val needle = submittedQuery.trim().lowercase()
+        val matchingRefuges = refuges
+            .filter {
+                it.name.lowercase().contains(needle) ||
+                    it.subtitle.lowercase().contains(needle) ||
+                    it.sensoryTag.lowercase().contains(needle)
+            }
+            .map {
+                SearchResult(
+                    id = it.id,
+                    title = it.name,
+                    subtitle = it.subtitle,
+                    type = SearchResultType.Refuge,
+                    sensoryLabel = it.sensoryTag
+                )
+            }
+
+        // Offered alongside the refuges, not instead of them: a typed address is
+        // somewhere to walk to even when it is nothing like a calm landmark.
+        val geocoded = runCatching { geocoder.resolve(submittedQuery.trim()) }
+            .getOrNull()
+            ?.let { point ->
+                SearchResult(
+                    id = "place_${point.latitude},${point.longitude}",
+                    title = submittedQuery.trim(),
+                    subtitle = runCatching { geocoder.describe(point) }.getOrNull()
+                        ?: point.toCoordinateLabel(),
+                    type = SearchResultType.Route,
+                    sensoryLabel = ""
+                )
+            }
+
+        searchResults = matchingRefuges + listOfNotNull(geocoded)
+        searching = false
     }
 
     val showingHistory = submittedQuery.isBlank() || submittedQuery.isMyLocation()
-    val shown = if (showingHistory) recentSearches else backendSearchResults
+    val shown = if (showingHistory) recentSearches else searchResults
 
     Column(
         modifier = Modifier
@@ -1597,8 +1698,8 @@ private fun SearchScreen(
                 onClick = {
                     onSearchRecorded(result)
                     val refuge = refuges.firstOrNull {
-                        it.name.equals(result.title, ignoreCase = true)
-                    } ?: repository.getRefugeDetail(result.id)
+                        it.id == result.id || it.name.equals(result.title, ignoreCase = true)
+                    }
                     when {
                         refuge != null -> onRefugeSelected(refuge)
                         result.type == SearchResultType.Route ||
@@ -1693,9 +1794,8 @@ private fun SavedRouteRow(saved: SavedRoute, onClick: () -> Unit) {
 
 @Composable
 private fun RouteOptionsScreen(
-    destination: Refuge,
+    destination: Refuge?,
     pinnedOrigin: GeoPoint?,
-    defaultOrigin: GeoPoint,
     savedRoutes: List<SavedRoute>,
     onToggleSavedRoute: (SavedRoute) -> Unit,
     initialOrigin: String,
@@ -1741,13 +1841,22 @@ private fun RouteOptionsScreen(
     var panelDrag by remember { mutableStateOf(0f) }
     val panelDragThreshold = with(LocalDensity.current) { 24.dp.toPx() }
     val panelDragState = rememberDraggableState { delta -> panelDrag += delta }
+    // Where the map opens before a route is drawn. Only a viewport, not a claim
+    // about anything: the camera moves to the real route once it loads.
     val cameraPositionState = rememberSenseNavCameraState(
-        target = LatLng(destination.latitude, destination.longitude),
+        target = destination?.let { LatLng(it.latitude, it.longitude) }
+            ?: pinnedOrigin?.let { LatLng(it.latitude, it.longitude) }
+            ?: MelbourneCbd,
         zoom = 14.2f
     )
 
+    // What to call the end of the trip. A tapped refuge names itself; otherwise
+    // the typed text is the only name there is.
+    val destinationLabel = destination?.name
+        ?: submittedDestination.ifBlank { "your destination" }
+
     LaunchedEffect(
-        destination.id,
+        destination?.id,
         submittedOrigin,
         submittedDestination,
         retryCount,
@@ -1755,6 +1864,16 @@ private fun RouteOptionsScreen(
         sensoryFilter
     ) {
         state = RoutesUiState.Loading
+        val destinationQuery = submittedDestination.ifBlank { destination?.name.orEmpty() }
+        if (destinationQuery.isBlank()) {
+            // Reached with no refuge selected and nothing typed, which happens
+            // when the landmark API has returned nothing to pick from.
+            state = RoutesUiState.Error(
+                "Type where you want to go, and this page will score the walking " +
+                    "routes to it."
+            )
+            return@LaunchedEffect
+        }
         state = try {
             // "My location" is a marker the user picked from the suggestions, not
             // a place name - sending it to the geocoder would just fail. A blank
@@ -1766,7 +1885,8 @@ private fun RouteOptionsScreen(
             // would send them walking from somewhere they are not. The pin only
             // stands in when there is no fix to be had.
             suspend fun whereTheUserIs(): GeoPoint =
-                locationProvider.currentLocation() ?: pinnedOrigin ?: defaultOrigin
+                locationProvider.currentLocation() ?: pinnedOrigin
+                    ?: throw OriginUnavailableException()
 
             val origin = if (submittedOrigin.isBlank() || submittedOrigin.isMyLocation()) {
                 whereTheUserIs()
@@ -1775,12 +1895,12 @@ private fun RouteOptionsScreen(
                     ?: throw PlaceNotFoundException(submittedOrigin)
             }
 
-            val destinationQuery = submittedDestination.ifBlank { destination.name }
             val target = when {
                 destinationQuery.isMyLocation() -> whereTheUserIs()
                 // Unedited: use the refuge's own coordinates rather than
                 // round-tripping its name through the geocoder.
-                destinationQuery.equals(destination.name, ignoreCase = true) ->
+                destination != null &&
+                    destinationQuery.equals(destination.name, ignoreCase = true) ->
                     destination.toGeoPoint()
                 else -> placeGeocoder.resolve(destinationQuery)
                     ?: throw PlaceNotFoundException(destinationQuery)
@@ -1806,7 +1926,7 @@ private fun RouteOptionsScreen(
     val shareRoute: (ScoredRoute) -> Unit = { route ->
         val trip = state as? RoutesUiState.Loaded
         val body = buildList {
-            add("SenseNav walking route to ${destination.name}")
+            add("SenseNav walking route to $destinationLabel")
             add(
                 listOfNotNull(
                     route.summary.takeIf { it.isNotBlank() },
@@ -1827,7 +1947,7 @@ private fun RouteOptionsScreen(
 
         val send = Intent(Intent.ACTION_SEND).apply {
             type = "text/plain"
-            putExtra(Intent.EXTRA_SUBJECT, "SenseNav route to ${destination.name}")
+            putExtra(Intent.EXTRA_SUBJECT, "SenseNav route to $destinationLabel")
             putExtra(Intent.EXTRA_TEXT, body)
         }
         runCatching { context.startActivity(Intent.createChooser(send, "Share route")) }
@@ -1856,7 +1976,7 @@ private fun RouteOptionsScreen(
     LaunchedEffect(ranked) { chosenRouteIndex = 0 }
 
     /** Stable across refetches, so a saved route stays saved when routes reload. */
-    fun routeKey(route: ScoredRoute) = "${destination.name}|${route.summary}|${route.distanceText}"
+    fun routeKey(route: ScoredRoute) = "$destinationLabel|${route.summary}|${route.distanceText}"
 
     // Frame the whole trip once geometry arrives, and again when the panel
     // collapses - the map just gained the space the panel was using.
@@ -2048,7 +2168,7 @@ private fun RouteOptionsScreen(
                                                 SavedRoute(
                                                     id = key,
                                                     summary = route.summary,
-                                                    destinationName = destination.name,
+                                                    destinationName = destinationLabel,
                                                     durationText = route.durationText,
                                                     distanceText = route.distanceText,
                                                     sensitivityLabel = if (route.isScored) {
@@ -2080,7 +2200,7 @@ private fun RouteOptionsScreen(
                                                     origin = current.origin,
                                                     destination = current.destination,
                                                     destinationName = submittedDestination
-                                                        .ifBlank { destination.name }
+                                                        .ifBlank { destinationLabel }
                                                 )
                                             )
                                         },
@@ -2742,14 +2862,12 @@ private const val WalkingMetersPerMinute = 80.0
  * Everything on this page is derived from the routes just scored and the bands
  * the user set for themselves: the reading, where it sits against their own High
  * cut-off, what the alternatives cost in time, and which calm places sit close
- * enough to the line to duck into. Advisories from the warnings service are
- * shown too, but as their own section - they describe a place, not this trip,
- * and presenting one as a verdict on the user's route was the old page's
- * central problem.
+ * enough to the line to duck into. Nothing here is a stored advisory about a
+ * place - the API has no such feed, and inventing one was the old page's central
+ * problem.
  */
 @Composable
 private fun WarningScreen(
-    warnings: List<WarningInfo>,
     routes: List<ScoredRoute>,
     focusRoute: ScoredRoute?,
     filter: SensoryFilter,
@@ -2764,7 +2882,7 @@ private fun WarningScreen(
     val flagged = focusRoute ?: routes.maxByOrNull { it.avgPedestrianCount ?: 0.0 }
 
     if (flagged == null) {
-        NoRouteWarningScreen(warnings = warnings, onBack = onBack, onPlanRoute = onReroute)
+        NoRouteWarningScreen(onBack = onBack, onPlanRoute = onReroute)
         return
     }
 
@@ -2980,35 +3098,6 @@ private fun WarningScreen(
                     lineHeight = 17.sp
                 )
 
-                // Advisories from the warnings service. Kept separate because
-                // they are about a location, not about the route on this page.
-                if (warnings.isNotEmpty()) {
-                    Spacer(modifier = Modifier.height(22.dp))
-                    WarningSectionTitle("Current area advisories")
-                    warnings.forEach { warning ->
-                        Spacer(modifier = Modifier.height(8.dp))
-                        Text(
-                            text = "${warning.title} - ${warning.locationName}",
-                            color = SenseInk,
-                            fontSize = 14.sp,
-                            fontWeight = FontWeight.Bold
-                        )
-                        Text(
-                            text = "Crowd density ${warning.densityPercent}% - " +
-                                warning.riskSummary,
-                            color = SenseMuted,
-                            fontSize = 12.sp,
-                            lineHeight = 17.sp
-                        )
-                        Text(
-                            text = "${warning.suggestedAction} (${warning.dataSource})",
-                            color = SenseMuted,
-                            fontSize = 12.sp,
-                            lineHeight = 17.sp
-                        )
-                    }
-                }
-
                 Spacer(modifier = Modifier.height(22.dp))
                 Button(
                     modifier = Modifier.fillMaxWidth(),
@@ -3218,7 +3307,6 @@ private fun AlternativeRouteRow(
  */
 @Composable
 private fun NoRouteWarningScreen(
-    warnings: List<WarningInfo>,
     onBack: () -> Unit,
     onPlanRoute: () -> Unit
 ) {
@@ -3257,32 +3345,6 @@ private fun NoRouteWarningScreen(
             fontSize = 13.sp,
             lineHeight = 19.sp
         )
-
-        if (warnings.isNotEmpty()) {
-            Spacer(modifier = Modifier.height(22.dp))
-            WarningSectionTitle("Current area advisories")
-            warnings.forEach { warning ->
-                Spacer(modifier = Modifier.height(8.dp))
-                Text(
-                    text = "${warning.title} - ${warning.locationName}",
-                    color = SenseInk,
-                    fontSize = 14.sp,
-                    fontWeight = FontWeight.Bold
-                )
-                Text(
-                    text = "Crowd density ${warning.densityPercent}% - ${warning.riskSummary}",
-                    color = SenseMuted,
-                    fontSize = 12.sp,
-                    lineHeight = 17.sp
-                )
-                Text(
-                    text = "${warning.suggestedAction} (${warning.dataSource})",
-                    color = SenseMuted,
-                    fontSize = 12.sp,
-                    lineHeight = 17.sp
-                )
-            }
-        }
 
         Spacer(modifier = Modifier.height(24.dp))
         Button(

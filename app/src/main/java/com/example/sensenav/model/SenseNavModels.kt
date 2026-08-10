@@ -207,17 +207,6 @@ fun RouteResult.withThresholds(filter: SensoryFilter): RouteResult = copy(
     }
 )
 
-data class WarningInfo(
-    val id: String,
-    val title: String,
-    val locationName: String,
-    val densityPercent: Int,
-    val riskSummary: String,
-    val dataSource: String,
-    val suggestedAction: String,
-    val routeId: String
-)
-
 data class SearchResult(
     val id: String,
     val title: String,
