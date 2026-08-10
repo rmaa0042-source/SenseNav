@@ -2149,7 +2149,7 @@ private fun RouteOptionsScreen(
                                 fontSize = 21.sp,
                                 fontWeight = FontWeight.Bold
                             )
-                            SmallRoundButton("X", onBack)
+                            RoundIconButton(R.drawable.ic_close, "Close", onBack)
                         }
                         Spacer(modifier = Modifier.height(8.dp))
 
@@ -4026,22 +4026,8 @@ private fun SearchPill(text: String, modifier: Modifier, onClick: () -> Unit) {
     }
 }
 
-@Composable
-private fun SmallRoundButton(text: String, onClick: () -> Unit, modifier: Modifier = Modifier) {
-    Box(
-        modifier = modifier
-            .size(44.dp)
-            .clip(CircleShape)
-            .background(Color.White)
-            .clickable(onClick = onClick),
-        contentAlignment = Alignment.Center
-    ) {
-        Text(text, color = SenseInk, fontSize = 11.sp, fontWeight = FontWeight.Bold)
-    }
-}
-
 /**
- * The icon twin of [SmallRoundButton]. The button stays 44.dp whatever
+ * Every round chrome button in the app. The button stays 44.dp whatever
  * [iconSize] is, so a glyph can be made more legible without growing the tap
  * target - or shrinking it, which would matter more.
  */
