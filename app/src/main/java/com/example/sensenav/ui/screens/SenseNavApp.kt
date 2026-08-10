@@ -1,6 +1,7 @@
 package com.example.sensenav.ui.screens
 
 import androidx.compose.foundation.Canvas
+import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
@@ -85,7 +86,9 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalFocusManager
 import androidx.compose.ui.platform.LocalSoftwareKeyboardController
+import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.input.ImeAction
+import com.example.sensenav.R
 import com.example.sensenav.data.FilterStore
 import com.example.sensenav.data.HistoryStore
 import com.example.sensenav.data.LandmarkRepository
@@ -152,6 +155,9 @@ private val ScreenBg = Color(0xFFF7F9FD)
 private val OnboardingBg = Color(0xFFE4DDEC)
 private val OnboardingBorder = Color(0xFFE7EAF0)
 private val StarGold = Color(0xFFE6AD00)
+
+// Sampled from the brand artwork, so the wordmark matches the navy in the mark.
+private val SenseLogoInk = Color(0xFF19144E)
 
 // Fallbacks only - the API supplies a colour per route and it takes precedence.
 private val SenseRiskLow = Color(0xFF3B8BD4)
@@ -707,39 +713,17 @@ private fun SenseNavBrandLockup(modifier: Modifier = Modifier) {
         verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.Center
     ) {
-        Box(
-            modifier = Modifier
-                .size(90.dp)
-                .clip(CircleShape)
-                .background(Brush.linearGradient(listOf(Color(0xFF17135F), Color(0xFF8B63F4)))),
-            contentAlignment = Alignment.Center
-        ) {
-            Text(
-                text = "S",
-                color = Color.White,
-                fontSize = 62.sp,
-                fontWeight = FontWeight.Black
-            )
-            Text(
-                text = "N",
-                modifier = Modifier.align(Alignment.CenterEnd).padding(end = 12.dp),
-                color = Color.White,
-                fontSize = 34.sp,
-                fontWeight = FontWeight.Bold
-            )
-            Box(
-                modifier = Modifier
-                    .align(Alignment.TopEnd)
-                    .padding(top = 17.dp, end = 17.dp)
-                    .size(12.dp)
-                    .clip(CircleShape)
-                    .background(Color.White)
-            )
-        }
+        // The wordmark beside it already announces the brand, so the mark itself
+        // stays decorative rather than doubling up for screen readers.
+        Image(
+            painter = painterResource(id = R.drawable.ic_sensenav_logo),
+            contentDescription = null,
+            modifier = Modifier.size(90.dp)
+        )
         Spacer(modifier = Modifier.width(18.dp))
         Text(
             text = "SenseNav",
-            color = Color(0xFF17135F),
+            color = SenseLogoInk,
             fontSize = 42.sp,
             fontWeight = FontWeight.Black,
             maxLines = 1
@@ -909,7 +893,15 @@ private fun OnboardingScreen(
                     .clip(RoundedCornerShape(6.dp))
                     .background(Color(0xFFE1E6EB))
             )
-            Spacer(modifier = Modifier.height(32.dp))
+            Spacer(modifier = Modifier.height(24.dp))
+            Image(
+                painter = painterResource(id = R.drawable.ic_sensenav_logo),
+                contentDescription = "SenseNav",
+                modifier = Modifier
+                    .align(Alignment.CenterHorizontally)
+                    .size(72.dp)
+            )
+            Spacer(modifier = Modifier.height(20.dp))
             Text(
                 text = "Set Your Preferences",
                 modifier = Modifier.align(Alignment.CenterHorizontally),
