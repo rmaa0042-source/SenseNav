@@ -20,10 +20,42 @@ class ProfileStore(context: Context) {
     fun displayName(): String =
         prefs.getString(KEY_NAME, null)?.takeIf { it.isNotBlank() } ?: DEFAULT_NAME
 
+    fun hasCompletedOnboarding(): Boolean =
+        prefs.getBoolean(KEY_ONBOARDING_COMPLETE, false)
+
+    fun sensitivityRange(): ClosedFloatingPointRange<Float> {
+        val start = prefs.getFloat(KEY_SENSITIVITY_START, DEFAULT_SENSITIVITY_START)
+            .coerceIn(0f, 1f)
+        val end = prefs.getFloat(KEY_SENSITIVITY_END, DEFAULT_SENSITIVITY_END)
+            .coerceIn(start, 1f)
+        return start..end
+    }
+
+    fun sensoryPreferenceRating(): Int =
+        prefs.getInt(KEY_PREFERENCE_RATING, DEFAULT_PREFERENCE_RATING).coerceIn(1, 5)
+
     /** Returns the stored value, which may differ from the input after trimming. */
     fun saveDisplayName(name: String): String {
         val cleaned = name.trim().take(MAX_NAME_CHARS).ifBlank { DEFAULT_NAME }
         prefs.edit().putString(KEY_NAME, cleaned).apply()
+        return cleaned
+    }
+
+    fun saveOnboardingProfile(
+        name: String,
+        sensitivityRange: ClosedFloatingPointRange<Float>,
+        preferenceRating: Int
+    ): String {
+        val cleaned = name.trim().take(MAX_NAME_CHARS).ifBlank { DEFAULT_NAME }
+        val start = sensitivityRange.start.coerceIn(0f, 1f)
+        val end = sensitivityRange.endInclusive.coerceIn(start, 1f)
+        prefs.edit()
+            .putString(KEY_NAME, cleaned)
+            .putFloat(KEY_SENSITIVITY_START, start)
+            .putFloat(KEY_SENSITIVITY_END, end)
+            .putInt(KEY_PREFERENCE_RATING, preferenceRating.coerceIn(1, 5))
+            .putBoolean(KEY_ONBOARDING_COMPLETE, true)
+            .apply()
         return cleaned
     }
 
@@ -53,7 +85,14 @@ class ProfileStore(context: Context) {
         const val PREFS_NAME = "sensenav_profile"
         const val KEY_NAME = "display_name"
         const val KEY_PLACE = "saved_place"
+        const val KEY_ONBOARDING_COMPLETE = "onboarding_complete"
+        const val KEY_SENSITIVITY_START = "sensitivity_start"
+        const val KEY_SENSITIVITY_END = "sensitivity_end"
+        const val KEY_PREFERENCE_RATING = "preference_rating"
         const val DEFAULT_NAME = "Matr Kohler"
         const val MAX_NAME_CHARS = 40
+        const val DEFAULT_SENSITIVITY_START = 0.05f
+        const val DEFAULT_SENSITIVITY_END = 0.35f
+        const val DEFAULT_PREFERENCE_RATING = 4
     }
 }
