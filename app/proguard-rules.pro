@@ -14,10 +14,10 @@
 # format - for the API's JSON and for the JSON in SharedPreferences alike - so
 # obfuscating them would rename the keys and orphan data written by an earlier
 # build.
--keep class com.example.sensenav.api.** { *; }
--keep class com.example.sensenav.model.** { *; }
--keep class com.example.sensenav.data.Wiki*Dto { *; }
--keep class com.example.sensenav.data.WikimediaImageRepository$CachedLookup { *; }
+-keep class com.flip6.sensenav.api.** { *; }
+-keep class com.flip6.sensenav.model.** { *; }
+-keep class com.flip6.sensenav.data.Wiki*Dto { *; }
+-keep class com.flip6.sensenav.data.WikimediaImageRepository$CachedLookup { *; }
 
 # Belt and braces for any model added later without a keep rule of its own.
 -keepclassmembers,allowobfuscation class * {
@@ -25,7 +25,7 @@
 }
 
 # Retrofit reads the suspend functions' return types by reflection.
--keep,allowobfuscation,allowshrinking interface com.example.sensenav.api.SenseNavApi
+-keep,allowobfuscation,allowshrinking interface com.flip6.sensenav.api.SenseNavApi
 -keep,allowobfuscation,allowshrinking class kotlin.coroutines.Continuation
 
 # Crash reports are only worth having if the frames name real files and lines.

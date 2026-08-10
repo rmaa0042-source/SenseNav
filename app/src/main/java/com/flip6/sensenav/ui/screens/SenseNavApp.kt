@@ -1,0 +1,4092 @@
+package com.flip6.sensenav.ui.screens
+
+import androidx.annotation.DrawableRes
+import androidx.compose.foundation.Canvas
+import androidx.compose.foundation.Image
+import androidx.compose.foundation.background
+import androidx.compose.foundation.border
+import androidx.compose.foundation.clickable
+import androidx.compose.foundation.gestures.Orientation
+import androidx.compose.foundation.gestures.draggable
+import androidx.compose.foundation.gestures.rememberDraggableState
+import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.PaddingValues
+import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.fillMaxHeight
+import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
+import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
+import androidx.compose.foundation.lazy.LazyRow
+import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.material3.AlertDialog
+import androidx.compose.material3.Button
+import androidx.compose.material3.ButtonDefaults
+import androidx.compose.material3.Card
+import androidx.compose.material3.CardDefaults
+import androidx.compose.material3.ExperimentalMaterial3Api
+import androidx.compose.material3.Icon
+import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.NavigationBar
+import androidx.compose.material3.NavigationBarItem
+import androidx.compose.material3.OutlinedTextField
+import androidx.compose.material3.RangeSlider
+import androidx.compose.material3.Scaffold
+import androidx.compose.material3.Slider
+import androidx.compose.material3.SliderDefaults
+import androidx.compose.material3.Surface
+import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
+import androidx.compose.runtime.Composable
+import androidx.compose.runtime.CompositionLocalProvider
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateListOf
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.setValue
+import androidx.compose.ui.Alignment
+import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
+import androidx.compose.ui.geometry.CornerRadius
+import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.geometry.Size
+import androidx.compose.ui.graphics.Brush
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.Path
+import androidx.compose.ui.graphics.drawscope.Stroke
+import androidx.compose.ui.graphics.drawscope.clipRect
+import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.unit.Dp
+import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
+import android.Manifest
+import android.content.Intent
+import android.util.Log
+import androidx.compose.foundation.BorderStroke
+import androidx.activity.compose.BackHandler
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.foundation.text.KeyboardActions
+import androidx.compose.foundation.text.KeyboardOptions
+import androidx.compose.material3.CircularProgressIndicator
+import androidx.compose.material3.OutlinedTextFieldDefaults
+import androidx.compose.ui.focus.FocusDirection
+import androidx.compose.ui.focus.FocusRequester
+import androidx.compose.ui.focus.focusRequester
+import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.platform.LocalFocusManager
+import androidx.compose.ui.platform.LocalSoftwareKeyboardController
+import androidx.compose.ui.res.painterResource
+import androidx.compose.ui.text.input.ImeAction
+import com.flip6.sensenav.R
+import com.flip6.sensenav.data.FilterStore
+import com.flip6.sensenav.data.HistoryStore
+import com.flip6.sensenav.data.LandmarkRepository
+import com.flip6.sensenav.data.LocationProvider
+import com.flip6.sensenav.data.PlaceGeocoder
+import com.flip6.sensenav.data.ProfileStore
+import com.flip6.sensenav.data.RouteRepository
+import com.flip6.sensenav.data.SavedRouteStore
+import com.flip6.sensenav.model.SavedPlace
+import com.flip6.sensenav.model.SavedRoute
+import com.flip6.sensenav.model.GeoPoint
+import com.flip6.sensenav.model.NavStep
+import com.flip6.sensenav.model.Refuge
+import com.flip6.sensenav.model.RouteResult
+import com.flip6.sensenav.model.ScoredRoute
+import com.flip6.sensenav.model.SearchResult
+import com.flip6.sensenav.model.SearchResultType
+import com.flip6.sensenav.model.Sensitivity
+import com.flip6.sensenav.model.SensoryFilter
+import com.flip6.sensenav.model.buildRouteGuidance
+import com.flip6.sensenav.model.distanceTo
+import com.flip6.sensenav.model.formatMeters
+import com.flip6.sensenav.model.formatMinutes
+import com.flip6.sensenav.model.parseDurationMinutes
+import com.flip6.sensenav.model.withThresholds
+import com.flip6.sensenav.data.WikimediaImageRepository
+import com.flip6.sensenav.ui.refuge.LocalRefugeImages
+import com.flip6.sensenav.ui.refuge.RefugeImage
+import com.flip6.sensenav.ui.refuge.rememberRefugeImage
+import com.flip6.sensenav.ui.map.MapRoute
+import com.flip6.sensenav.ui.map.MelbourneCbd
+import com.flip6.sensenav.ui.map.SenseNavMap
+import com.flip6.sensenav.ui.map.rememberSenseNavCameraState
+import com.flip6.sensenav.ui.map.toLatLng
+import com.google.android.gms.maps.CameraUpdateFactory
+import com.google.android.gms.maps.model.LatLng
+import com.google.android.gms.maps.model.LatLngBounds
+import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.launch
+import retrofit2.HttpException
+import java.io.IOException
+import java.time.LocalTime
+import java.time.format.DateTimeFormatter
+import kotlin.math.PI
+import kotlin.math.cos
+import kotlin.math.roundToInt
+import kotlin.math.sin
+import android.graphics.Color as AndroidColor
+
+private const val TAG = "SenseNav"
+
+// The two states the location header can be in before it names a place. Held
+// as constants because the empty-state screens branch on them.
+private const val LocationFindingLabel = "Finding your location..."
+private const val LocationUnavailableLabel = "Location unavailable"
+
+private val SenseBlue = Color(0xFF2F5FBD)
+private val SenseSoftBlue = Color(0xFFEAF2FF)
+private val SenseInk = Color(0xFF1F2633)
+private val SenseMuted = Color(0xFF798293)
+private val SensePink = Color(0xFFFF4F86)
+private val SenseGreen = Color(0xFF1B9F5A)
+private val ScreenBg = Color(0xFFF7F9FD)
+private val OnboardingBg = Color(0xFFE4DDEC)
+private val OnboardingBorder = Color(0xFFE7EAF0)
+
+// Sampled from the brand artwork, so the wordmark matches the navy in the mark.
+private val SenseLogoInk = Color(0xFF19144E)
+
+// Fallbacks only - the API supplies a colour per route and it takes precedence.
+private val SenseRiskLow = Color(0xFF3B8BD4)
+private val SenseRiskMedium = Color(0xFFEF9F27)
+private val SenseRiskHigh = Color(0xFFE24B4A)
+
+private fun ScoredRoute.displayColor(): Color =
+    colorHex?.let { hex -> runCatching { Color(AndroidColor.parseColor(hex)) }.getOrNull() }
+        ?: when (sensitivity) {
+            Sensitivity.Low -> SenseRiskLow
+            Sensitivity.Medium -> SenseRiskMedium
+            Sensitivity.High -> SenseRiskHigh
+            Sensitivity.Unknown -> SenseMuted
+        }
+
+private fun ScoredRoute.toMapRoute(isDimmed: Boolean = false) = MapRoute(
+    points = path.map { it.toLatLng() },
+    color = displayColor(),
+    isDimmed = isDimmed
+)
+
+/** Quietest first, breaking ties on the raw pedestrian count. */
+private fun List<ScoredRoute>.rankedBySensory(): List<ScoredRoute> =
+    sortedWith(
+        compareBy(
+            { it.sensitivity.rank },
+            { it.avgPedestrianCount ?: Double.MAX_VALUE }
+        )
+    )
+
+private fun Refuge.toGeoPoint() = GeoPoint(latitude, longitude)
+
+private fun GeoPoint.toCoordinateLabel() = "%.4f, %.4f".format(latitude, longitude)
+
+/** Null for refuges that came from a source with no distance, so the row omits it. */
+private fun Refuge.distanceLabel(): String? = distanceKm?.let { km ->
+    if (km < 1.0) "${(km * 1000).roundToInt()} m away" else "%.1f km away".format(km)
+}
+
+private class PlaceNotFoundException(val query: String) : Exception()
+
+/**
+ * No device fix and no pinned place, so there is no origin to route from. Raised
+ * rather than defaulted: a route from a point the user is not standing on is
+ * worse than no route at all.
+ */
+private class OriginUnavailableException : Exception()
+
+private fun Throwable.toUserMessage(): String = when (this) {
+    is PlaceNotFoundException ->
+        "Couldn't find \"$query\". Try a fuller address, or clear the box to " +
+            "route from your current location."
+    is OriginUnavailableException ->
+        "Can't tell where you are. Turn on location, or type a starting point " +
+            "in the From box."
+    is HttpException -> "The routing service returned an error (HTTP ${code()})."
+    is IOException ->
+        "Can't reach the routing service. Check your connection, or confirm the " +
+            "API address is still current - the VM's IP is not static."
+    else -> message ?: "Something went wrong while loading routes."
+}
+
+private sealed interface RoutesUiState {
+    data object Loading : RoutesUiState
+    data class Error(val message: String) : RoutesUiState
+    data class Loaded(
+        val origin: GeoPoint,
+        val destination: GeoPoint,
+        val result: RouteResult
+    ) : RoutesUiState
+}
+
+private enum class AppScreen {
+    Splash,
+    Onboarding,
+    Home,
+    NearbyMap,
+    Search,
+    Routes,
+    Navigation,
+    Warning
+}
+
+/**
+ * The trip the navigation screen is walking the user through.
+ *
+ * Held above the route options screen rather than inside it, so that leaving
+ * navigation for the warning page and coming back does not lose which route was
+ * being followed. [alternatives] travel with it because the warning page's whole
+ * job is to compare the route in progress against the ones not taken.
+ */
+private data class NavigationPlan(
+    val route: ScoredRoute,
+    val alternatives: List<ScoredRoute>,
+    val origin: GeoPoint,
+    val destination: GeoPoint,
+    val destinationName: String
+)
+
+@Composable
+fun SenseNavApp() {
+    // A back stack rather than a single current screen, so that both the system
+    // back gesture and the on-screen back buttons return to wherever the user
+    // actually came from instead of a fixed parent for each page.
+    val backStack = remember { mutableStateListOf(AppScreen.Splash) }
+    val screen = backStack.last()
+    val navigateTo = remember {
+        { target: AppScreen ->
+            // Re-selecting the page already on show is a no-op, so back never
+            // has to step through a repeat of it.
+            if (backStack.last() != target) backStack.add(target)
+        }
+    }
+    val goBack = remember {
+        { if (backStack.size > 1) backStack.removeAt(backStack.lastIndex) }
+    }
+    // Ending a trip is not "one step back" - the user is done with the whole
+    // stack that led into it, so it collapses rather than unwinds.
+    val goHome = remember {
+        {
+            backStack.clear()
+            backStack.add(AppScreen.Home)
+            Unit
+        }
+    }
+    val landmarkRepository = remember { LandmarkRepository() }
+
+    // History is device-local, so it is read straight from disk at start-up
+    // rather than fetched, and mirrored here so the screens recompose on change.
+    val context = LocalContext.current
+    // Held at the top so its lookup cache is shared by every screen.
+    val refugeImages = remember(context) { WikimediaImageRepository(context) }
+    val historyStore = remember(context) { HistoryStore(context) }
+    val profileStore = remember(context) { ProfileStore(context) }
+    // Held here rather than on the routes screen so saving a route on one screen
+    // is visible on the other without either owning the data.
+    val savedRouteStore = remember(context) { SavedRouteStore(context) }
+    var savedRoutes by remember { mutableStateOf(savedRouteStore.saved()) }
+    val locationProvider = remember(context) { LocationProvider(context) }
+    val placeGeocoder = remember(context) { PlaceGeocoder(context) }
+    // Held at the top because the radius decides what gets fetched and the
+    // thresholds decide how every route is banded, so both outlive the map
+    // screen the filter is opened from.
+    val filterStore = remember(context) { FilterStore(context) }
+    var sensoryFilter by remember { mutableStateOf(filterStore.filter()) }
+    var editingFilter by remember { mutableStateOf(false) }
+
+    var displayName by remember { mutableStateOf(profileStore.displayName()) }
+    // Null means "follow the device". A pinned place overrides it everywhere,
+    // so what the header says and what the app searches around stay the same.
+    var savedPlace by remember { mutableStateOf(profileStore.savedPlace()) }
+    var editingName by remember { mutableStateOf(false) }
+    var editingLocation by remember { mutableStateOf(false) }
+    // Bumped whenever the user explicitly asks for their own location. Without
+    // it, a lookup that came back empty - indoors, no fix yet - leaves the
+    // header reading "Location unavailable" with nothing that retries it.
+    var locationRefresh by remember { mutableStateOf(0) }
+    var recentSearches by remember { mutableStateOf(historyStore.recentSearches()) }
+    var recentlyViewed by remember { mutableStateOf(historyStore.recentlyViewed()) }
+
+    var refuges by remember { mutableStateOf<List<Refuge>>(emptyList()) }
+    // Shown under the user's name on the home screen. Starts as a status line
+    // rather than a placeholder suburb, so it never claims a location we have
+    // not actually read from the device.
+    var locationLabel by remember { mutableStateOf(LocationFindingLabel) }
+
+    // Both the label and the refuge list are anchored on the device position, so
+    // permission is asked for here rather than waiting for the map screen to do
+    // it. Asked once per session: a second prompt after a denial is dismissed by
+    // the system anyway.
+    var hasLocationPermission by remember { mutableStateOf(locationProvider.hasPermission()) }
+    var permissionRequested by remember { mutableStateOf(false) }
+    val locationPermissionLauncher = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.RequestMultiplePermissions()
+    ) { granted -> hasLocationPermission = granted.values.any { it } }
+
+    // Held until the splash clears, so the dialog lands on the home screen
+    // where the location it unlocks is visible.
+    LaunchedEffect(screen, hasLocationPermission, savedPlace) {
+        // Someone who has pinned a location is not asking to be located.
+        if (savedPlace == null &&
+            screen == AppScreen.Home && !hasLocationPermission && !permissionRequested
+        ) {
+            permissionRequested = true
+            locationPermissionLauncher.launch(
+                arrayOf(
+                    Manifest.permission.ACCESS_FINE_LOCATION,
+                    Manifest.permission.ACCESS_COARSE_LOCATION
+                )
+            )
+        }
+    }
+
+    // Recommendations come from the Calm-rated entries in the API's landmark
+    // dataset, anchored on the pinned location or, failing that, where the user
+    // actually is. Outside the dataset's coverage that query legitimately returns
+    // nothing, and nothing is what the home screen then shows. Re-runs when the
+    // pin changes or permission is granted, so neither leaves the list stale.
+    LaunchedEffect(hasLocationPermission, savedPlace, locationRefresh, sensoryFilter.radiusKm) {
+        val pinned = savedPlace
+        val near = if (pinned != null) {
+            locationLabel = pinned.label
+            GeoPoint(pinned.latitude, pinned.longitude)
+        } else {
+            locationLabel = LocationFindingLabel
+            val current = locationProvider.currentLocation()
+            locationLabel = when {
+                // Permission denied, location off, or no fix yet - say so instead
+                // of naming a stand-in point, which is not where the user is.
+                current == null -> LocationUnavailableLabel
+                // Coordinates are a poor label but still honest when the device's
+                // geocoder has no name for the point (offline, or unmapped area).
+                else -> placeGeocoder.describe(current) ?: current.toCoordinateLabel()
+            }
+            current
+        }
+
+        // No pin and no fix from the device leaves nothing to search around.
+        // Better an empty list the screens explain than results centred on a
+        // point the user was never at.
+        if (near == null) {
+            Log.w(TAG, "No pinned place and no device fix - refuge list left empty")
+            refuges = emptyList()
+            return@LaunchedEffect
+        }
+
+        val anchorSource = if (pinned != null) "pinned '${pinned.label}'" else "device"
+        Log.i(TAG, "Loading refuges near ${near.latitude},${near.longitude} (from $anchorSource)")
+
+        // The landmark API is the only source of refuges. A failure or an empty
+        // answer leaves the list empty and the screens say so, rather than
+        // substituting a catalogue that would look like live data.
+        refuges = try {
+            landmarkRepository.getLowSensoryRefuges(
+                near = near,
+                radiusKm = sensoryFilter.radiusKm.toDouble()
+            ).also { Log.i(TAG, "Loaded ${it.size} calm landmarks from the API") }
+        } catch (cancellation: CancellationException) {
+            throw cancellation
+        } catch (e: Exception) {
+            Log.w(TAG, "Landmark API failed - showing no refuges", e)
+            emptyList()
+        }
+    }
+
+    // Null until the landmark API answers. There is no local catalogue to fall
+    // back on, so "no destination yet" is a state the screens have to handle
+    // rather than something a seed value can paper over.
+    var destination by remember { mutableStateOf<Refuge?>(null) }
+
+    LaunchedEffect(refuges) {
+        if (refuges.isNotEmpty()) {
+            destination = refuges.first()
+        }
+    }
+    // Kept so the warning screen can draw the same routes without refetching.
+    var loadedRoutes by remember { mutableStateOf<List<ScoredRoute>>(emptyList()) }
+    // The trip in progress, set when the user starts one and kept until they
+    // start another, so the warning page and the navigation page agree on which
+    // route is being talked about.
+    var navigationPlan by remember { mutableStateOf<NavigationPlan?>(null) }
+    // Which route the warning page should open on. Null when the page was
+    // reached from somewhere with no route in hand, in which case it falls back
+    // to the busiest of whatever was last scored.
+    var warningFocus by remember { mutableStateOf<ScoredRoute?>(null) }
+    // Endpoints typed on the search screen. A blank start means "my current
+    // location"; a blank end falls back to the selected refuge's own name.
+    var startPoint by remember { mutableStateOf("") }
+    var endPoint by remember { mutableStateOf("") }
+
+    // Opening a refuge is what counts as "viewed" - marker taps on the map are
+    // browsing, not a visit, so they are not recorded.
+    val openRefuge: (Refuge) -> Unit = { refuge ->
+        destination = refuge
+        // Clears any typed destination, so routing uses the refuge's own
+        // coordinates instead of geocoding a stale search term.
+        endPoint = refuge.name
+        recentlyViewed = historyStore.recordViewed(refuge)
+    }
+
+    // Keeps the system back gesture consistent with the in-app back buttons.
+    // Disabled at the root so back there still leaves the app.
+    BackHandler(enabled = backStack.size > 1, onBack = goBack)
+
+    MaterialTheme {
+      CompositionLocalProvider(LocalRefugeImages provides refugeImages) {
+        when (screen) {
+            AppScreen.Splash -> SplashScreen(onFinished = {
+                // Replaces the splash rather than stacking on it: once it has
+                // cleared there is nothing to go back to.
+                backStack.clear()
+                backStack.add(
+                    if (profileStore.hasCompletedOnboarding()) {
+                        AppScreen.Home
+                    } else {
+                        AppScreen.Onboarding
+                    }
+                )
+            })
+            AppScreen.Onboarding -> OnboardingScreen(
+                initialFilter = sensoryFilter,
+                initialPlace = savedPlace,
+                geocoder = placeGeocoder,
+                onGetStarted = { name, filter, place ->
+                    // Non-blank by the time it gets here: the screen will not
+                    // advance until the name field has something in it.
+                    displayName = profileStore.saveOnboardingProfile(name)
+                    // The same store the filter sheet writes to, so whichever one
+                    // the user touched last is what routes are scored against.
+                    sensoryFilter = filterStore.save(filter)
+                    if (place == null) {
+                        profileStore.clearPlace()
+                        savedPlace = null
+                    } else {
+                        savedPlace = profileStore.savePlace(place)
+                    }
+                    backStack.clear()
+                    backStack.add(AppScreen.Home)
+                }
+            )
+            AppScreen.Home -> HomeScreen(
+                refuges = refuges,
+                displayName = displayName,
+                locationLabel = locationLabel,
+                onEditName = { editingName = true },
+                onEditLocation = { editingLocation = true },
+                onSearch = { navigateTo(AppScreen.Search) },
+                onNearbyMap = { navigateTo(AppScreen.NearbyMap) },
+                onOpenRefuge = { refuge ->
+                    openRefuge(refuge)
+                    navigateTo(AppScreen.NearbyMap)
+                },
+                // The same dialog and the same state as the map's filter, so
+                // whichever one the user opens shows what the other one set.
+                onFilter = { editingFilter = true }
+            )
+            AppScreen.NearbyMap -> {
+                val focus = destination
+                if (focus == null) {
+                    // No refuges came back, so there are no markers to draw and
+                    // nothing for the map to centre on.
+                    NoRefugesScreen(
+                        locationLabel = locationLabel,
+                        radiusKm = sensoryFilter.radiusKm,
+                        onBack = goBack,
+                        onRetry = { locationRefresh++ }
+                    )
+                } else {
+                    NearbyMapScreen(
+                        refuges = refuges,
+                        initialRefuge = focus,
+                        onBack = goBack,
+                        onSearch = { navigateTo(AppScreen.Search) },
+                        onFilter = { editingFilter = true },
+                        onNavigate = { refuge ->
+                            openRefuge(refuge)
+                            navigateTo(AppScreen.Routes)
+                        },
+                        onWarning = {
+                            warningFocus = null
+                            navigateTo(AppScreen.Warning)
+                        }
+                    )
+                }
+            }
+            AppScreen.Search -> SearchScreen(
+                refuges = refuges,
+                geocoder = placeGeocoder,
+                origin = startPoint,
+                onOriginChange = { startPoint = it },
+                recentSearches = recentSearches,
+                recentlyViewed = recentlyViewed,
+                onSearchRecorded = { result ->
+                    recentSearches = historyStore.recordSearch(result)
+                },
+                savedRoutes = savedRoutes,
+                onClearSearches = { recentSearches = historyStore.clearSearches() },
+                onClearViewed = { recentlyViewed = historyStore.clearViewed() },
+                onClearSavedRoutes = { savedRoutes = savedRouteStore.clear() },
+                onBack = goBack,
+                onRoute = { typedDestination ->
+                    endPoint = typedDestination
+                    navigateTo(AppScreen.Routes)
+                },
+                onRefugeSelected = { refuge ->
+                    openRefuge(refuge)
+                    navigateTo(AppScreen.NearbyMap)
+                },
+                onWarning = {
+                    warningFocus = null
+                    navigateTo(AppScreen.Warning)
+                }
+            )
+            AppScreen.Routes -> RouteOptionsScreen(
+                destination = destination,
+                pinnedOrigin = savedPlace?.let { GeoPoint(it.latitude, it.longitude) },
+                savedRoutes = savedRoutes,
+                onToggleSavedRoute = { savedRoutes = savedRouteStore.toggle(it) },
+                initialOrigin = startPoint,
+                initialDestination = endPoint.ifBlank { destination?.name.orEmpty() },
+                sensoryFilter = sensoryFilter,
+                onBack = goBack,
+                onFilter = { editingFilter = true },
+                onWarning = { route ->
+                    warningFocus = route
+                    navigateTo(AppScreen.Warning)
+                },
+                onStart = { plan ->
+                    navigationPlan = plan
+                    navigateTo(AppScreen.Navigation)
+                },
+                onRoutesLoaded = { loadedRoutes = it }
+            )
+            AppScreen.Navigation -> {
+                val plan = navigationPlan
+                if (plan == null) {
+                    // Only reachable if the trip was dropped while the screen was
+                    // on show; there is nothing to navigate, so step back rather
+                    // than sit on an empty page.
+                    LaunchedEffect(Unit) { goBack() }
+                } else {
+                    NavigationScreen(
+                        plan = plan,
+                        onBack = goBack,
+                        onFinish = goHome,
+                        onWarning = {
+                            warningFocus = plan.route
+                            navigateTo(AppScreen.Warning)
+                        }
+                    )
+                }
+            }
+            AppScreen.Warning -> WarningScreen(
+                routes = loadedRoutes.ifEmpty {
+                    navigationPlan?.let { listOf(it.route) + it.alternatives }.orEmpty()
+                },
+                focusRoute = warningFocus,
+                filter = sensoryFilter,
+                refuges = refuges,
+                destinationName = navigationPlan?.destinationName
+                    ?: destination?.name
+                    ?: "your destination",
+                onBack = goBack,
+                onReroute = { navigateTo(AppScreen.Routes) },
+                onUseRoute = { route ->
+                    val plan = navigationPlan
+                    if (plan == null) {
+                        navigateTo(AppScreen.Routes)
+                    } else {
+                        navigationPlan = plan.copy(
+                            route = route,
+                            alternatives = (listOf(plan.route) + plan.alternatives)
+                                .filterNot { it == route }
+                        )
+                        navigateTo(AppScreen.Navigation)
+                    }
+                }
+            )
+        }
+
+        if (editingFilter) {
+            SensoryFilterDialog(
+                initialFilter = sensoryFilter,
+                onDismiss = { editingFilter = false },
+                onSave = { chosen ->
+                    sensoryFilter = filterStore.save(chosen)
+                    editingFilter = false
+                }
+            )
+        }
+
+        if (editingName) {
+            EditNameDialog(
+                initialName = displayName,
+                onDismiss = { editingName = false },
+                onSave = { entered ->
+                    displayName = profileStore.saveDisplayName(entered)
+                    editingName = false
+                }
+            )
+        }
+
+        if (editingLocation) {
+            EditLocationDialog(
+                initialQuery = savedPlace?.label.orEmpty(),
+                isPinned = savedPlace != null,
+                geocoder = placeGeocoder,
+                onDismiss = { editingLocation = false },
+                onUseDeviceLocation = {
+                    profileStore.clearPlace()
+                    savedPlace = null
+                    permissionRequested = false
+                    locationRefresh++
+                    editingLocation = false
+                },
+                onSave = { place ->
+                    savedPlace = profileStore.savePlace(place)
+                    editingLocation = false
+                }
+            )
+        }
+      }
+    }
+}
+
+@Composable
+private fun SplashScreen(onFinished: () -> Unit) {
+    LaunchedEffect(Unit) {
+        delay(1100)
+        onFinished()
+    }
+
+    Box(
+        modifier = Modifier
+            .fillMaxSize()
+            .background(Color.White)
+    ) {
+        Column(
+            modifier = Modifier
+                .align(Alignment.TopCenter)
+                .fillMaxWidth()
+                .padding(top = 126.dp, start = 26.dp, end = 26.dp),
+            horizontalAlignment = Alignment.CenterHorizontally
+        ) {
+            SenseNavBrandLockup()
+        }
+
+        SplashCityIllustration(
+            modifier = Modifier
+                .align(Alignment.BottomCenter)
+                .fillMaxWidth()
+                .fillMaxHeight(0.58f)
+        )
+    }
+}
+
+@Composable
+private fun SenseNavBrandLockup(modifier: Modifier = Modifier) {
+    Row(
+        modifier = modifier,
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.Center
+    ) {
+        // The wordmark beside it already announces the brand, so the mark itself
+        // stays decorative rather than doubling up for screen readers.
+        Image(
+            painter = painterResource(id = R.drawable.ic_sensenav_logo),
+            contentDescription = null,
+            modifier = Modifier.size(90.dp)
+        )
+        Spacer(modifier = Modifier.width(18.dp))
+        Text(
+            text = "SenseNav",
+            color = SenseLogoInk,
+            fontSize = 42.sp,
+            fontWeight = FontWeight.Black,
+            maxLines = 1
+        )
+    }
+}
+
+@Composable
+private fun SplashCityIllustration(modifier: Modifier = Modifier) {
+    Canvas(modifier = modifier) {
+        val w = size.width
+        val h = size.height
+        val ink = Color(0xFF111111)
+        val hillDark = Color(0xFF3E3E3E)
+        val hillMid = Color(0xFF6A6A6A)
+        val hillLight = Color(0xFFB9B9B9)
+
+        val buildingStroke = Stroke(width = 6f, cap = androidx.compose.ui.graphics.StrokeCap.Round)
+        val detailStroke = Stroke(width = 4f, cap = androidx.compose.ui.graphics.StrokeCap.Round)
+
+        drawLine(ink, Offset(0f, h * 0.48f), Offset(w * 0.23f, h * 0.48f), 6f)
+        drawRect(
+            color = ink,
+            topLeft = Offset(-w * 0.02f, h * 0.48f),
+            size = Size(w * 0.23f, h * 0.32f),
+            style = buildingStroke
+        )
+        for (slot in 0..3) {
+            val x = w * (0.03f + slot * 0.045f)
+            drawLine(ink, Offset(x, h * 0.57f), Offset(x, h * 0.64f), 5f)
+            drawLine(ink, Offset(x, h * 0.70f), Offset(x, h * 0.76f), 5f)
+        }
+
+        val pinTop = Offset(w * 0.50f, h * 0.40f)
+        drawCircle(ink, w * 0.19f, pinTop, style = Stroke(width = 9f))
+        drawCircle(Color.White, w * 0.105f, pinTop)
+        drawCircle(ink, w * 0.095f, pinTop, style = Stroke(width = 8f))
+        val pinTail = Path().apply {
+            moveTo(w * 0.33f, h * 0.50f)
+            quadraticTo(w * 0.50f, h * 0.82f, w * 0.67f, h * 0.50f)
+        }
+        drawPath(pinTail, ink, style = Stroke(width = 9f, cap = androidx.compose.ui.graphics.StrokeCap.Round))
+        drawLine(ink, Offset(w * 0.46f, h * 0.15f), Offset(w * 0.44f, h * 0.08f), 6f)
+        drawLine(ink, Offset(w * 0.54f, h * 0.15f), Offset(w * 0.56f, h * 0.08f), 6f)
+        drawLine(ink, Offset(w * 0.61f, h * 0.18f), Offset(w * 0.67f, h * 0.13f), 6f)
+        drawCircle(ink, w * 0.025f, Offset(w * 0.28f, h * 0.20f))
+        drawLine(ink, Offset(w * 0.78f, h * 0.18f), Offset(w * 0.82f, h * 0.14f), 6f)
+        drawLine(ink, Offset(w * 0.78f, h * 0.14f), Offset(w * 0.82f, h * 0.18f), 6f)
+
+        drawRect(
+            color = ink,
+            topLeft = Offset(w * 0.76f, h * 0.34f),
+            size = Size(w * 0.16f, h * 0.30f),
+            style = buildingStroke
+        )
+        drawLine(ink, Offset(w * 0.82f, h * 0.41f), Offset(w * 0.82f, h * 0.59f), 7f)
+        drawLine(ink, Offset(w * 0.88f, h * 0.41f), Offset(w * 0.88f, h * 0.59f), 7f)
+
+        val darkHill = Path().apply {
+            moveTo(0f, h * 0.78f)
+            cubicTo(w * 0.12f, h * 0.56f, w * 0.22f, h * 0.60f, w * 0.38f, h * 0.76f)
+            cubicTo(w * 0.56f, h * 0.94f, w * 0.75f, h * 0.53f, w, h * 0.65f)
+            lineTo(w, h)
+            lineTo(0f, h)
+            close()
+        }
+        drawPath(darkHill, hillDark)
+
+        val midHill = Path().apply {
+            moveTo(w * 0.50f, h)
+            cubicTo(w * 0.52f, h * 0.72f, w * 0.70f, h * 0.67f, w * 0.86f, h * 0.77f)
+            cubicTo(w * 0.93f, h * 0.81f, w * 0.98f, h * 0.78f, w, h * 0.76f)
+            lineTo(w, h)
+            close()
+        }
+        drawPath(midHill, hillMid)
+
+        val lightHill = Path().apply {
+            moveTo(w * 0.13f, h)
+            cubicTo(w * 0.26f, h * 0.90f, w * 0.42f, h * 0.82f, w * 0.58f, h * 0.86f)
+            cubicTo(w * 0.70f, h * 0.89f, w * 0.78f, h * 0.95f, w * 0.86f, h)
+            close()
+        }
+        drawPath(lightHill, hillLight)
+
+        drawSwirl(Offset(w * 0.18f, h * 0.76f), w * 0.085f, Color(0xFFBDBDBD))
+        drawSwirl(Offset(w * 0.58f, h * 0.77f), w * 0.08f, Color(0xFFBDBDBD))
+        drawSwirl(Offset(w * 0.88f, h * 0.73f), w * 0.085f, Color(0xFFAFAFAF))
+        drawLine(hillLight, Offset(w * 0.35f, h * 0.88f), Offset(w * 0.31f, h * 0.93f), 5f)
+        drawLine(hillLight, Offset(w * 0.40f, h * 0.87f), Offset(w * 0.36f, h * 0.92f), 5f)
+        drawLine(hillLight, Offset(w * 0.47f, h * 0.87f), Offset(w * 0.43f, h * 0.93f), 5f)
+        drawLine(Color.White.copy(alpha = 0.55f), Offset(w * 0.65f, h * 0.90f), Offset(w * 0.61f, h * 0.95f), 5f)
+        drawCircle(Color(0xFFBABABA), w * 0.014f, Offset(w * 0.72f, h * 0.78f))
+        drawCircle(Color(0xFFBABABA), w * 0.014f, Offset(w * 0.84f, h * 0.78f))
+        drawCircle(Color(0xFFBABABA), w * 0.014f, Offset(w * 0.94f, h * 0.66f))
+        drawPath(
+            Path().apply {
+                moveTo(w * 0.34f, h * 0.76f)
+                cubicTo(w * 0.37f, h * 0.71f, w * 0.40f, h * 0.81f, w * 0.43f, h * 0.75f)
+            },
+            Color(0xFFBDBDBD),
+            style = detailStroke
+        )
+    }
+}
+
+private fun androidx.compose.ui.graphics.drawscope.DrawScope.drawSwirl(
+    centre: Offset,
+    radius: Float,
+    color: Color
+) {
+    val points = (0..28).map { index ->
+        val t = index / 28f
+        val angle = t * 2.8f * PI.toFloat()
+        val r = radius * t
+        Offset(
+            x = centre.x + cos(angle) * r,
+            y = centre.y + sin(angle) * r
+        )
+    }
+    val path = Path().apply {
+        points.firstOrNull()?.let { moveTo(it.x, it.y) }
+        points.drop(1).forEach { lineTo(it.x, it.y) }
+    }
+    drawPath(path, color, style = Stroke(width = radius * 0.18f, cap = androidx.compose.ui.graphics.StrokeCap.Round))
+}
+
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+private fun OnboardingScreen(
+    initialFilter: SensoryFilter,
+    initialPlace: SavedPlace?,
+    geocoder: PlaceGeocoder,
+    onGetStarted: (
+        name: String,
+        filter: SensoryFilter,
+        place: SavedPlace?
+    ) -> Unit
+) {
+    var name by remember { mutableStateOf("") }
+    // The same type the filter sheet edits, so the numbers this screen shows are
+    // the ones routes are actually scored against - and normalised() does all the
+    // clamping for both sliders.
+    var filter by remember { mutableStateOf(initialFilter.normalised()) }
+    var nameError by remember { mutableStateOf<String?>(null) }
+    var locationQuery by remember { mutableStateOf(initialPlace?.label.orEmpty()) }
+    var locationError by remember { mutableStateOf<String?>(null) }
+    var checkingLocation by remember { mutableStateOf(false) }
+    val focusManager = LocalFocusManager.current
+    val nameFocus = remember { FocusRequester() }
+    val scope = rememberCoroutineScope()
+
+    // The location field, unlike the name, may be left empty: that means "follow
+    // the device", which is the app's default. Anything typed there is geocoded
+    // before the screen will advance, so a place that cannot be found is caught
+    // here rather than anchoring every later search somewhere wrong.
+    val finish = {
+        val typedName = name.trim()
+        val typed = locationQuery.trim()
+        when {
+            // Focused rather than only flagged, so the field is scrolled back into
+            // view and ready to type in - the button that was just tapped can be a
+            // long way below it.
+            typedName.isEmpty() -> {
+                nameError = "Enter your name to continue."
+                runCatching { nameFocus.requestFocus() }
+                Unit
+            }
+            typed.isEmpty() -> onGetStarted(typedName, filter, null)
+            // Untouched from what was already pinned, so its coordinates still hold
+            // and there is nothing to look up again.
+            typed == initialPlace?.label -> onGetStarted(typedName, filter, initialPlace)
+            else -> {
+                checkingLocation = true
+                locationError = null
+                scope.launch {
+                    val point = runCatching { geocoder.resolve(typed) }.getOrNull()
+                    checkingLocation = false
+                    if (point == null) {
+                        locationError =
+                            "Couldn't find \"$typed\". Try a suburb or a fuller address."
+                    } else {
+                        onGetStarted(
+                            typedName,
+                            filter,
+                            SavedPlace(typed, point.latitude, point.longitude)
+                        )
+                    }
+                }
+                Unit
+            }
+        }
+    }
+
+    Box(
+        modifier = Modifier
+            .fillMaxSize()
+            .background(OnboardingBg)
+    ) {
+        Column(
+            modifier = Modifier
+                .align(Alignment.BottomCenter)
+                .fillMaxWidth()
+                .fillMaxHeight(0.94f)
+                .clip(RoundedCornerShape(topStart = 34.dp, topEnd = 34.dp))
+                .background(Color.White)
+                .padding(horizontal = 28.dp, vertical = 14.dp)
+        ) {
+            Box(
+                modifier = Modifier
+                    .align(Alignment.CenterHorizontally)
+                    .width(86.dp)
+                    .height(6.dp)
+                    .clip(RoundedCornerShape(6.dp))
+                    .background(Color(0xFFE1E6EB))
+            )
+            Spacer(modifier = Modifier.height(24.dp))
+            Image(
+                painter = painterResource(id = R.drawable.ic_sensenav_logo),
+                contentDescription = "SenseNav",
+                modifier = Modifier
+                    .align(Alignment.CenterHorizontally)
+                    .size(72.dp)
+            )
+            Spacer(modifier = Modifier.height(20.dp))
+            Text(
+                text = "Set Your Preferences",
+                modifier = Modifier.align(Alignment.CenterHorizontally),
+                color = SenseInk,
+                fontSize = 24.sp,
+                fontWeight = FontWeight.Black
+            )
+            Spacer(modifier = Modifier.height(32.dp))
+
+            Column(
+                modifier = Modifier
+                    .weight(1f)
+                    .verticalScroll(rememberScrollState())
+            ) {
+                Text("Your Name", color = SenseInk, fontSize = 18.sp, fontWeight = FontWeight.Medium)
+                Spacer(modifier = Modifier.height(12.dp))
+                OutlinedTextField(
+                    value = name,
+                    onValueChange = { name = it; nameError = null },
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .focusRequester(nameFocus),
+                    placeholder = { Text("e.g. Freddy", color = SenseMuted) },
+                    singleLine = true,
+                    isError = nameError != null,
+                    shape = RoundedCornerShape(18.dp),
+                    colors = OutlinedTextFieldDefaults.colors(
+                        focusedBorderColor = OnboardingBorder,
+                        unfocusedBorderColor = OnboardingBorder,
+                        cursorColor = SenseBlue
+                    )
+                )
+                nameError?.let { message ->
+                    Spacer(modifier = Modifier.height(6.dp))
+                    Text(message, color = SensePink, fontSize = 12.sp, lineHeight = 16.sp)
+                }
+
+                Spacer(modifier = Modifier.height(34.dp))
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Text(
+                        text = "Sensory Sensitivity Level",
+                        modifier = Modifier.weight(1f),
+                        color = SenseInk,
+                        fontSize = 18.sp,
+                        fontWeight = FontWeight.Medium
+                    )
+                    Text(
+                        text = "${filter.lowMaxPedestrians} - ${filter.mediumMaxPedestrians}",
+                        color = SenseBlue,
+                        fontSize = 16.sp,
+                        fontWeight = FontWeight.Bold
+                    )
+                }
+                Spacer(modifier = Modifier.height(4.dp))
+                Text(
+                    text = "Measured in people per minute on nearby footpath sensors. " +
+                        "The two handles set where quiet ends and busy begins.",
+                    color = SenseMuted,
+                    fontSize = 13.sp,
+                    lineHeight = 17.sp
+                )
+                Spacer(modifier = Modifier.height(8.dp))
+                RangeSlider(
+                    value = filter.lowMaxPedestrians.toFloat()..
+                        filter.mediumMaxPedestrians.toFloat(),
+                    onValueChange = { selected ->
+                        // normalised() keeps the handles a step apart and inside
+                        // their bounds: dragging Low into Medium pushes Medium up,
+                        // and Low itself stops halfway up the scale, past which it
+                        // no longer means "quiet".
+                        filter = filter.copy(
+                            lowMaxPedestrians = selected.start.toStep(),
+                            mediumMaxPedestrians = selected.endInclusive.toStep()
+                        ).normalised()
+                    },
+                    valueRange = SensoryFilter.PEDESTRIAN_STEP.toFloat()..
+                        SensoryFilter.MAX_PEDESTRIANS.toFloat(),
+                    // Dark rather than SenseBlue: the handles sit on top of the
+                    // Low band, which is itself a blue, and two blues that close
+                    // together lose the handle against the track.
+                    colors = SliderDefaults.colors(thumbColor = SenseInk),
+                    track = {
+                        SensitivityTrack(
+                            lowFraction = filter.lowMaxPedestrians.fractionOfScale(),
+                            mediumFraction = filter.mediumMaxPedestrians.fractionOfScale()
+                        )
+                    }
+                )
+                Spacer(modifier = Modifier.height(10.dp))
+                SensitivityBandRow(
+                    tint = SenseRiskLow,
+                    label = "Low",
+                    value = "under ${filter.lowMaxPedestrians} people"
+                )
+                Spacer(modifier = Modifier.height(8.dp))
+                SensitivityBandRow(
+                    tint = SenseRiskMedium,
+                    label = "Medium",
+                    value = "${filter.lowMaxPedestrians} to ${filter.mediumMaxPedestrians} people"
+                )
+                Spacer(modifier = Modifier.height(8.dp))
+                SensitivityBandRow(
+                    tint = SenseRiskHigh,
+                    label = "High",
+                    value = "${filter.mediumMaxPedestrians} people and above"
+                )
+
+                Spacer(modifier = Modifier.height(24.dp))
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Text(
+                        text = "Search Range",
+                        modifier = Modifier.weight(1f),
+                        color = SenseInk,
+                        fontSize = 18.sp,
+                        fontWeight = FontWeight.Medium
+                    )
+                    Text(
+                        text = "${filter.radiusKm} km",
+                        color = SenseBlue,
+                        fontSize = 16.sp,
+                        fontWeight = FontWeight.Bold
+                    )
+                }
+                Spacer(modifier = Modifier.height(4.dp))
+                Text(
+                    text = "How far out to look for refuges and quieter routes.",
+                    color = SenseMuted,
+                    fontSize = 13.sp,
+                    lineHeight = 17.sp
+                )
+                Spacer(modifier = Modifier.height(8.dp))
+                Slider(
+                    value = filter.radiusKm.toFloat(),
+                    onValueChange = { filter = filter.copy(radiusKm = it.roundToInt()) },
+                    valueRange = SensoryFilter.MIN_RADIUS_KM.toFloat()..
+                        SensoryFilter.MAX_RADIUS_KM.toFloat(),
+                    colors = SliderDefaults.colors(
+                        thumbColor = SenseBlue,
+                        activeTrackColor = SenseBlue,
+                        inactiveTrackColor = Color(0xFFE1E6EB)
+                    )
+                )
+
+                Spacer(modifier = Modifier.height(24.dp))
+                Text(
+                    text = "Default Location",
+                    color = SenseInk,
+                    fontSize = 18.sp,
+                    fontWeight = FontWeight.Medium
+                )
+                Spacer(modifier = Modifier.height(4.dp))
+                Text(
+                    text = "Where searches start from. Leave it empty to follow your " +
+                        "device as you move.",
+                    color = SenseMuted,
+                    fontSize = 13.sp,
+                    lineHeight = 17.sp
+                )
+                Spacer(modifier = Modifier.height(12.dp))
+                OutlinedTextField(
+                    value = locationQuery,
+                    onValueChange = { locationQuery = it; locationError = null },
+                    modifier = Modifier.fillMaxWidth(),
+                    placeholder = { Text("Suburb or address", color = SenseMuted) },
+                    singleLine = true,
+                    enabled = !checkingLocation,
+                    isError = locationError != null,
+                    shape = RoundedCornerShape(18.dp),
+                    keyboardOptions = KeyboardOptions(imeAction = ImeAction.Done),
+                    keyboardActions = KeyboardActions(onDone = { focusManager.clearFocus() }),
+                    colors = OutlinedTextFieldDefaults.colors(
+                        focusedBorderColor = OnboardingBorder,
+                        unfocusedBorderColor = OnboardingBorder,
+                        cursorColor = SenseBlue
+                    )
+                )
+                locationError?.let { message ->
+                    Spacer(modifier = Modifier.height(6.dp))
+                    Text(message, color = SensePink, fontSize = 12.sp, lineHeight = 16.sp)
+                }
+            }
+
+            Spacer(modifier = Modifier.height(18.dp))
+            Button(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .height(58.dp),
+                onClick = finish,
+                enabled = !checkingLocation,
+                colors = ButtonDefaults.buttonColors(containerColor = SenseBlue),
+                shape = RoundedCornerShape(12.dp)
+            ) {
+                Text(
+                    text = if (checkingLocation) "Checking location..." else "Get Started",
+                    color = Color.White,
+                    fontSize = 18.sp,
+                    fontWeight = FontWeight.Bold
+                )
+            }
+            Spacer(modifier = Modifier.height(18.dp))
+        }
+    }
+}
+
+/**
+ * Rounds a slider position to a whole [SensoryFilter.PEDESTRIAN_STEP], so a drag
+ * lands on a number worth reading rather than "37 people per minute".
+ */
+private fun Float.toStep(): Int =
+    (this / SensoryFilter.PEDESTRIAN_STEP).roundToInt() * SensoryFilter.PEDESTRIAN_STEP
+
+/** Where a pedestrian count sits along the sensitivity slider's scale, as 0f..1f. */
+private fun Int.fractionOfScale(): Float {
+    val first = SensoryFilter.PEDESTRIAN_STEP.toFloat()
+    val last = SensoryFilter.MAX_PEDESTRIANS.toFloat()
+    return ((this - first) / (last - first)).coerceIn(0f, 1f)
+}
+
+/**
+ * The sensitivity slider's track, painted in the three band colours instead of
+ * one accent, so the bar itself shows how much of the scale the handles have
+ * given to Low, Medium and High.
+ *
+ * Each band redraws the whole rounded bar clipped to its own slice. That keeps
+ * the outer ends round and the two internal boundaries square, and a band
+ * squeezed to nothing simply draws nothing rather than needing a special case.
+ */
+@Composable
+private fun SensitivityTrack(
+    lowFraction: Float,
+    mediumFraction: Float,
+    modifier: Modifier = Modifier
+) {
+    Canvas(
+        modifier = modifier
+            .fillMaxWidth()
+            .height(20.dp)
+    ) {
+        val barHeight = 6.dp.toPx()
+        val top = (size.height - barHeight) / 2f
+        val corner = CornerRadius(barHeight / 2f)
+        val lowEnd = size.width * lowFraction
+        val mediumEnd = size.width * mediumFraction
+
+        fun band(from: Float, to: Float, color: Color) {
+            if (to <= from) return
+            clipRect(left = from, right = to) {
+                drawRoundRect(
+                    color = color,
+                    topLeft = Offset(0f, top),
+                    size = Size(size.width, barHeight),
+                    cornerRadius = corner
+                )
+            }
+        }
+
+        band(0f, lowEnd, SenseRiskLow)
+        band(lowEnd, mediumEnd, SenseRiskMedium)
+        band(mediumEnd, size.width, SenseRiskHigh)
+    }
+}
+
+/**
+ * One band of the sensitivity scale: the colour routes get rated with, the name,
+ * and the pedestrian counts the handles above have just set for it.
+ */
+@Composable
+private fun SensitivityBandRow(tint: Color, label: String, value: String) {
+    Row(verticalAlignment = Alignment.CenterVertically) {
+        Box(modifier = Modifier.size(10.dp).background(tint, CircleShape))
+        Spacer(modifier = Modifier.width(10.dp))
+        Text(label, color = SenseInk, fontSize = 14.sp, fontWeight = FontWeight.Medium)
+        Spacer(modifier = Modifier.weight(1f))
+        Text(value, color = SenseMuted, fontSize = 13.sp)
+    }
+}
+
+@Composable
+private fun HomeScreen(
+    refuges: List<Refuge>,
+    displayName: String,
+    locationLabel: String,
+    onEditName: () -> Unit,
+    onEditLocation: () -> Unit,
+    onSearch: () -> Unit,
+    onNearbyMap: () -> Unit,
+    onOpenRefuge: (Refuge) -> Unit,
+    onFilter: () -> Unit
+) {
+
+    Scaffold(
+        containerColor = Color.White,
+        bottomBar = {
+            NavigationBar(containerColor = Color.White) {
+                NavigationBarItem(
+                    selected = true,
+                    onClick = {},
+                    icon = {
+                        // No contentDescription: the label below says the same thing,
+                        // and a description here would have TalkBack read it twice.
+                        Icon(
+                            painter = painterResource(id = R.drawable.ic_home),
+                            contentDescription = null
+                        )
+                    },
+                    label = { Text("Home") }
+                )
+                NavigationBarItem(
+                    selected = false,
+                    onClick = onNearbyMap,
+                    icon = {
+                        Icon(
+                            painter = painterResource(id = R.drawable.ic_map_pin),
+                            contentDescription = null
+                        )
+                    },
+                    label = { Text("Refuges") }
+                )
+            }
+        }
+    ) { padding ->
+        LazyColumn(
+            modifier = Modifier
+                .fillMaxSize()
+                .padding(padding),
+            contentPadding = PaddingValues(horizontal = 20.dp, vertical = 18.dp),
+            verticalArrangement = Arrangement.spacedBy(16.dp)
+        ) {
+            item {
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Box(
+                        modifier = Modifier
+                            .size(48.dp)
+                            .clip(CircleShape)
+                            .background(Brush.verticalGradient(listOf(Color(0xFFFFD6A5), Color(0xFF4A2C2A))))
+                    )
+                    Spacer(modifier = Modifier.width(12.dp))
+                    // Both lines are edited in place. Padding keeps each one a
+                    // usable tap target, and the tightened line heights stop
+                    // that padding from reading as a gap between the two.
+                    Column(modifier = Modifier.weight(1f)) {
+                        Text(
+                            text = displayName,
+                            modifier = Modifier
+                                .clip(RoundedCornerShape(6.dp))
+                                .clickable(onClick = onEditName)
+                                .padding(vertical = 2.dp, horizontal = 2.dp),
+                            color = SenseInk,
+                            fontSize = 18.sp,
+                            lineHeight = 20.sp,
+                            fontWeight = FontWeight.Bold,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis
+                        )
+                        Text(
+                            text = "$locationLabel  (edit)",
+                            modifier = Modifier
+                                .clip(RoundedCornerShape(6.dp))
+                                .clickable(onClick = onEditLocation)
+                                .padding(vertical = 2.dp, horizontal = 2.dp),
+                            color = SenseMuted,
+                            fontSize = 12.sp,
+                            lineHeight = 14.sp,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis
+                        )
+                    }
+                    RoundIconButton(R.drawable.ic_search, "Search", onSearch)
+                    Spacer(modifier = Modifier.width(8.dp))
+                    RoundIconButton(R.drawable.ic_filter, "Filter", onFilter)
+                }
+            }
+
+            item {
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .clip(RoundedCornerShape(14.dp))
+                        .background(SenseSoftBlue)
+                        .clickable(onClick = onNearbyMap)
+                        .padding(16.dp),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Text("Pin", color = SenseBlue, fontWeight = FontWeight.Bold)
+                    Spacer(modifier = Modifier.width(12.dp))
+                    Text(
+                        text = "Discover quiet spaces and sensory-friendly routes around you",
+                        modifier = Modifier.weight(1f),
+                        color = SenseInk,
+                        fontSize = 14.sp,
+                        lineHeight = 18.sp
+                    )
+                    Text(">", color = SenseInk, fontWeight = FontWeight.Bold)
+                }
+            }
+
+            // Heading and its caption share one item: as separate items the
+            // column's 16dp arrangement spacing lands between them, on top of
+            // the height the "See All" button already contributes.
+            item {
+                Column {
+                    SectionHeader("Nearest Sensory Refuges", "See All", onNearbyMap)
+                    Text(
+                        // Deliberately not "near you" - the dataset is CBD-only, so
+                        // for a suburban user the closest of these can still be a
+                        // long way off. Each row carries its own distance. The
+                        // caveat stays: these ratings are inferred, and someone
+                        // choosing where to go on one is entitled to know that.
+                        text = "Places rated calm, sorted by distance. Sensory ratings " +
+                            "are indicative and reflect the type of each place, not " +
+                            "live sensor readings.",
+                        color = SenseMuted,
+                        fontSize = 12.sp,
+                        lineHeight = 16.sp
+                    )
+                }
+            }
+
+            item {
+                LazyRow(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                    items(refuges.take(3)) { refuge ->
+                        RefugePhotoCard(refuge = refuge, onClick = { onOpenRefuge(refuge) })
+                    }
+                }
+            }
+
+            // Everything the carousel did not already show, so no refuge appears
+            // twice on the screen.
+            items(refuges.drop(3)) { refuge ->
+                RefugeListItem(refuge = refuge, onClick = { onOpenRefuge(refuge) })
+            }
+        }
+    }
+}
+
+/**
+ * Stands in for the nearby map when the landmark API has produced nothing to put
+ * on it. Names which of the three causes applies, because the remedy differs:
+ * waiting on a fix, a fix that never came, or a real answer of "nothing here".
+ */
+@Composable
+private fun NoRefugesScreen(
+    locationLabel: String,
+    radiusKm: Int,
+    onBack: () -> Unit,
+    onRetry: () -> Unit
+) {
+    val pending = locationLabel == LocationFindingLabel
+    val locationKnown = !pending && locationLabel != LocationUnavailableLabel
+
+    Column(
+        modifier = Modifier
+            .fillMaxSize()
+            .background(Color.White)
+            .padding(horizontal = 20.dp, vertical = 28.dp)
+    ) {
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            BackButton(onBack)
+            Spacer(modifier = Modifier.width(12.dp))
+            Text(
+                text = "Nearby calm places",
+                color = SenseInk,
+                fontSize = 18.sp,
+                fontWeight = FontWeight.Bold
+            )
+        }
+
+        Spacer(modifier = Modifier.height(24.dp))
+        Text(
+            text = when {
+                pending -> "Looking for calm places near you"
+                locationKnown -> "Nothing calm within $radiusKm km"
+                else -> "We don't know where you are yet"
+            },
+            color = SenseInk,
+            fontSize = 20.sp,
+            fontWeight = FontWeight.Bold
+        )
+        Spacer(modifier = Modifier.height(8.dp))
+        Text(
+            text = when {
+                pending -> "Waiting on a location fix from your device."
+                locationKnown ->
+                    "The landmark dataset has no Calm-rated places inside your " +
+                        "search range of $locationLabel. A wider range may reach some."
+                else ->
+                    "Calm places are found around your location. Allow location " +
+                        "access, or pin a place from the home screen, and they will load."
+            },
+            color = SenseMuted,
+            fontSize = 13.sp,
+            lineHeight = 19.sp
+        )
+
+        if (!pending) {
+            Spacer(modifier = Modifier.height(24.dp))
+            Button(
+                modifier = Modifier.fillMaxWidth(),
+                onClick = onRetry,
+                colors = ButtonDefaults.buttonColors(containerColor = SenseBlue),
+                shape = RoundedCornerShape(14.dp)
+            ) {
+                Text("Try again", color = Color.White, fontWeight = FontWeight.Bold)
+            }
+        }
+    }
+}
+
+@Composable
+private fun NearbyMapScreen(
+    refuges: List<Refuge>,
+    initialRefuge: Refuge,
+    onBack: () -> Unit,
+    onSearch: () -> Unit,
+    onFilter: () -> Unit,
+    onNavigate: (Refuge) -> Unit,
+    onWarning: () -> Unit
+) {
+    var selectedRefuge by remember { mutableStateOf(initialRefuge) }
+    val cameraPositionState = rememberSenseNavCameraState(
+        target = LatLng(selectedRefuge.latitude, selectedRefuge.longitude),
+        zoom = 14.5f
+    )
+
+    // Follow the selection, whether it came from a marker tap or the bottom card.
+//    LaunchedEffect(selectedRefuge.id, cameraPositionState.isMoving) {
+//        if (cameraPositionState.position.zoom > 0f) {
+//                cameraPositionState.animate(
+//                    CameraUpdateFactory.newLatLngZoom(
+//                        LatLng(selectedRefuge.latitude, selectedRefuge.longitude),
+//                        15f
+//                    )
+//                )
+//            }
+//        }
+
+    Box(modifier = Modifier.fillMaxSize()) {
+        SenseNavMap(
+            modifier = Modifier.fillMaxSize(),
+            refuges = refuges,
+            selectedRefugeId = selectedRefuge.id,
+            onRefugeClick = { selectedRefuge = it },
+            cameraPositionState = cameraPositionState,
+            enableMyLocation = true,
+            // Keeps the Google logo and controls clear of the overlays.
+            contentPadding = PaddingValues(top = 150.dp, bottom = 210.dp)
+        )
+
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(horizontal = 16.dp, vertical = 34.dp),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            BackButton(onBack)
+            Spacer(modifier = Modifier.width(12.dp))
+            Text(
+                text = "Nearby Sensory Refuges",
+                modifier = Modifier.weight(1f),
+                color = SenseInk,
+                fontSize = 18.sp,
+                fontWeight = FontWeight.Bold
+            )
+            RoundIconButton(R.drawable.ic_filter, "Filter", onFilter)
+        }
+
+        SearchPill(
+            text = "Search quiet spaces, libraries...",
+            modifier = Modifier
+                .align(Alignment.TopCenter)
+                .padding(top = 88.dp)
+                .padding(horizontal = 20.dp),
+            onClick = onSearch
+        )
+
+        Card(
+            modifier = Modifier
+                .align(Alignment.BottomCenter)
+                .padding(18.dp)
+                .fillMaxWidth(),
+            shape = RoundedCornerShape(24.dp),
+            colors = CardDefaults.cardColors(containerColor = Color.White),
+            elevation = CardDefaults.cardElevation(defaultElevation = 8.dp)
+        ) {
+            Column(modifier = Modifier.padding(16.dp)) {
+                RefugeListItem(refuge = selectedRefuge, onClick = {}, showCredit = true)
+                Spacer(modifier = Modifier.height(12.dp))
+                Row {
+                    Button(
+                        modifier = Modifier.weight(1f),
+                        onClick = { onNavigate(selectedRefuge) },
+                        colors = ButtonDefaults.buttonColors(containerColor = SenseBlue),
+                        shape = RoundedCornerShape(12.dp)
+                    ) {
+                        Text("Navigate Here")
+                    }
+                    Spacer(modifier = Modifier.width(10.dp))
+                    Button(onClick = onWarning, shape = RoundedCornerShape(12.dp)) {
+                        Icon(
+                            painter = painterResource(id = R.drawable.ic_alert),
+                            contentDescription = "Sensory alert",
+                            modifier = Modifier.size(20.dp)
+                        )
+                    }
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun SearchScreen(
+    refuges: List<Refuge>,
+    geocoder: PlaceGeocoder,
+    origin: String,
+    onOriginChange: (String) -> Unit,
+    recentSearches: List<SearchResult>,
+    recentlyViewed: List<Refuge>,
+    savedRoutes: List<SavedRoute>,
+    onSearchRecorded: (SearchResult) -> Unit,
+    onClearSearches: () -> Unit,
+    onClearViewed: () -> Unit,
+    onClearSavedRoutes: () -> Unit,
+    onBack: () -> Unit,
+    onRoute: (String) -> Unit,
+    onRefugeSelected: (Refuge) -> Unit,
+    onWarning: () -> Unit
+) {
+    // The destination field doubles as the search box. What is typed and what
+    // has been searched for are separate: the query is only sent on enter.
+    var query by remember { mutableStateOf("") }
+    var submittedQuery by remember { mutableStateOf("") }
+    var searching by remember { mutableStateOf(false) }
+    var searchResults by remember { mutableStateOf<List<SearchResult>>(emptyList()) }
+    val keyboard = LocalSoftwareKeyboardController.current
+    val destinationFocus = remember { FocusRequester() }
+
+    // Land the user in the destination field so they can type straight away.
+    LaunchedEffect(Unit) {
+        destinationFocus.requestFocus()
+    }
+
+    // Emptying the box drops back to the history rather than stranding the
+    // results of a search the user has visibly deleted.
+    LaunchedEffect(query) {
+        if (query.isBlank()) submittedQuery = ""
+    }
+
+    // Two real sources, no search endpoint in between: the calm landmarks already
+    // loaded for this area are matched by name, and the device's own geocoder
+    // resolves anything else the user types into a place they can route to.
+    LaunchedEffect(submittedQuery, refuges) {
+        // "My location" is a chosen marker, not a place to look up, so it leaves
+        // the list on the history rather than reporting no matches for itself.
+        if (submittedQuery.isBlank() || submittedQuery.isMyLocation()) {
+            searchResults = emptyList()
+            searching = false
+            return@LaunchedEffect
+        }
+
+        searching = true
+        val needle = submittedQuery.trim().lowercase()
+        val matchingRefuges = refuges
+            .filter {
+                it.name.lowercase().contains(needle) ||
+                    it.subtitle.lowercase().contains(needle) ||
+                    it.sensoryTag.lowercase().contains(needle)
+            }
+            .map {
+                SearchResult(
+                    id = it.id,
+                    title = it.name,
+                    subtitle = it.subtitle,
+                    type = SearchResultType.Refuge,
+                    sensoryLabel = it.sensoryTag
+                )
+            }
+
+        // Offered alongside the refuges, not instead of them: a typed address is
+        // somewhere to walk to even when it is nothing like a calm landmark.
+        val geocoded = runCatching { geocoder.resolve(submittedQuery.trim()) }
+            .getOrNull()
+            ?.let { point ->
+                SearchResult(
+                    id = "place_${point.latitude},${point.longitude}",
+                    title = submittedQuery.trim(),
+                    subtitle = runCatching { geocoder.describe(point) }.getOrNull()
+                        ?: point.toCoordinateLabel(),
+                    type = SearchResultType.Route,
+                    sensoryLabel = ""
+                )
+            }
+
+        searchResults = matchingRefuges + listOfNotNull(geocoded)
+        searching = false
+    }
+
+    val showingHistory = submittedQuery.isBlank() || submittedQuery.isMyLocation()
+    val shown = if (showingHistory) recentSearches else searchResults
+
+    Column(
+        modifier = Modifier
+            .fillMaxSize()
+            .background(Color.White)
+            // Both history lists hold up to ten entries, so the page has to scroll.
+            .verticalScroll(rememberScrollState())
+            .padding(horizontal = 20.dp, vertical = 28.dp)
+    ) {
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            BackButton(onBack)
+            Text(
+                text = "Search",
+                modifier = Modifier.weight(1f),
+                color = SenseInk,
+                fontSize = 18.sp,
+                fontWeight = FontWeight.Bold
+            )
+            RoundIconButton(R.drawable.ic_alert, "Sensory alert", onWarning)
+        }
+
+        Spacer(modifier = Modifier.height(18.dp))
+        // The start is left blank on purpose: empty means "my current location",
+        // which is what the routing screen falls back to.
+        RoutePlannerCard(
+            originInput = origin,
+            onOriginInputChange = onOriginChange,
+            destinationInput = query,
+            onDestinationInputChange = { query = it },
+            onSubmit = {
+                submittedQuery = query.trim()
+                keyboard?.hide()
+            },
+            modifier = Modifier.fillMaxWidth(),
+            destinationFocusRequester = destinationFocus,
+            onRoute = {
+                keyboard?.hide()
+                val typed = query.trim()
+                // The marker is not a place someone searched for, so it stays out
+                // of the history list.
+                if (!typed.isMyLocation()) {
+                    onSearchRecorded(
+                        SearchResult(
+                            id = "typed_${typed.lowercase()}",
+                            title = typed,
+                            subtitle = "Searched destination",
+                            type = SearchResultType.Route,
+                            sensoryLabel = ""
+                        )
+                    )
+                }
+                onRoute(typed)
+            }
+        )
+
+        Spacer(modifier = Modifier.height(26.dp))
+        SectionHeader(
+            title = if (showingHistory) "Recent Searches" else "Search Results",
+            action = "Clear All".takeIf { showingHistory && recentSearches.isNotEmpty() },
+            onAction = onClearSearches
+        )
+
+        Spacer(modifier = Modifier.height(6.dp))
+        when {
+            searching -> HistoryEmptyHint("Searching...")
+            showingHistory && shown.isEmpty() ->
+                HistoryEmptyHint("Places you search for will be listed here.")
+            !showingHistory && shown.isEmpty() ->
+                HistoryEmptyHint("No matches for \"$submittedQuery\".")
+        }
+        shown.forEach { result ->
+            SearchResultRow(
+                result = result,
+                onClick = {
+                    onSearchRecorded(result)
+                    val refuge = refuges.firstOrNull {
+                        it.id == result.id || it.name.equals(result.title, ignoreCase = true)
+                    }
+                    when {
+                        refuge != null -> onRefugeSelected(refuge)
+                        result.type == SearchResultType.Route ||
+                            result.type == SearchResultType.Station -> onRoute(result.title)
+                    }
+                }
+            )
+        }
+
+        Spacer(modifier = Modifier.height(18.dp))
+        SectionHeader(
+            title = "Recently Viewed",
+            action = "Clear All".takeIf { recentlyViewed.isNotEmpty() },
+            onAction = onClearViewed
+        )
+        if (recentlyViewed.isEmpty()) {
+            HistoryEmptyHint("Refuges you open will be listed here.")
+        }
+        recentlyViewed.forEach { refuge ->
+            RefugeListItem(refuge = refuge, onClick = { onRefugeSelected(refuge) })
+        }
+
+        // Absent entirely until something has been saved - an empty section here
+        // would just be a heading explaining its own emptiness.
+        if (savedRoutes.isNotEmpty()) {
+            Spacer(modifier = Modifier.height(18.dp))
+            SectionHeader(
+                title = "Saved Routes",
+                action = "Clear All",
+                onAction = onClearSavedRoutes
+            )
+            Spacer(modifier = Modifier.height(6.dp))
+            savedRoutes.forEach { saved ->
+                SavedRouteRow(saved = saved, onClick = { onRoute(saved.destinationName) })
+            }
+        }
+    }
+}
+
+/**
+ * A kept route on the search page. Re-routes to the same destination rather than
+ * replaying stored geometry: the saved text is a record of a decision, and the
+ * sensor readings behind it will have moved on since.
+ */
+@Composable
+private fun SavedRouteRow(saved: SavedRoute, onClick: () -> Unit) {
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .clickable(onClick = onClick)
+            .padding(vertical = 12.dp),
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        Box(
+            modifier = Modifier.size(34.dp).clip(CircleShape).background(SenseSoftBlue),
+            contentAlignment = Alignment.Center
+        ) {
+            Text("Route", color = SenseBlue, fontSize = 8.sp, fontWeight = FontWeight.Bold)
+        }
+        Spacer(modifier = Modifier.width(12.dp))
+        Column(modifier = Modifier.weight(1f)) {
+            Text(
+                text = saved.destinationName,
+                color = SenseInk,
+                fontSize = 15.sp,
+                fontWeight = FontWeight.Bold,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis
+            )
+            Text(
+                text = listOfNotNull(
+                    saved.summary.takeIf { it.isNotBlank() },
+                    saved.durationText.takeIf { it.isNotBlank() },
+                    saved.distanceText.takeIf { it.isNotBlank() }
+                ).joinToString(" - "),
+                color = SenseMuted,
+                fontSize = 12.sp,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis
+            )
+        }
+        if (saved.sensitivityLabel != "Unrated") {
+            Text(
+                text = saved.sensitivityLabel,
+                color = SenseBlue,
+                fontSize = 12.sp,
+                fontWeight = FontWeight.Bold
+            )
+        }
+    }
+}
+
+@Composable
+private fun RouteOptionsScreen(
+    destination: Refuge?,
+    pinnedOrigin: GeoPoint?,
+    savedRoutes: List<SavedRoute>,
+    onToggleSavedRoute: (SavedRoute) -> Unit,
+    initialOrigin: String,
+    initialDestination: String,
+    sensoryFilter: SensoryFilter,
+    onBack: () -> Unit,
+    onFilter: () -> Unit,
+    onWarning: (ScoredRoute?) -> Unit,
+    onStart: (NavigationPlan) -> Unit,
+    onRoutesLoaded: (List<ScoredRoute>) -> Unit
+) {
+    val context = LocalContext.current
+    val routeRepository = remember { RouteRepository() }
+    val locationProvider = remember { LocationProvider(context) }
+    val placeGeocoder = remember { PlaceGeocoder(context) }
+    val keyboard = LocalSoftwareKeyboardController.current
+
+    // What the user is typing, and the values actually submitted for routing.
+    // A blank origin means "use my current location".
+    var originInput by remember(initialOrigin) { mutableStateOf(initialOrigin) }
+    var submittedOrigin by remember(initialOrigin) { mutableStateOf(initialOrigin) }
+    // Seeded from the refuge that was tapped, or from what was typed on the
+    // search screen, and reset if either changes.
+    var destinationInput by remember(initialDestination) { mutableStateOf(initialDestination) }
+    var submittedDestination by remember(initialDestination) {
+        mutableStateOf(initialDestination)
+    }
+
+    var retryCount by remember { mutableStateOf(0) }
+    var state by remember { mutableStateOf<RoutesUiState>(RoutesUiState.Loading) }
+
+    // Dragged down, the panel shrinks to its handle and the planner card goes
+    // with it, leaving the map to the route. Dragging is not the only way in or
+    // out of that state - the handle takes a tap too, since a precise drag is
+    // exactly the sort of interaction this app's users may not want to make.
+    // Which route the user picked. Defaults to the quietest, which is the one
+    // already drawn solid, so the screen opens on a coherent choice rather than
+    // on nothing being chosen.
+    var chosenRouteIndex by remember { mutableStateOf(0) }
+    var showHighRiskAlert by remember { mutableStateOf(false) }
+
+    var panelExpanded by remember { mutableStateOf(true) }
+    var panelDrag by remember { mutableStateOf(0f) }
+    val panelDragThreshold = with(LocalDensity.current) { 24.dp.toPx() }
+    val panelDragState = rememberDraggableState { delta -> panelDrag += delta }
+    // Where the map opens before a route is drawn. Only a viewport, not a claim
+    // about anything: the camera moves to the real route once it loads.
+    val cameraPositionState = rememberSenseNavCameraState(
+        target = destination?.let { LatLng(it.latitude, it.longitude) }
+            ?: pinnedOrigin?.let { LatLng(it.latitude, it.longitude) }
+            ?: MelbourneCbd,
+        zoom = 14.2f
+    )
+
+    // What to call the end of the trip. A tapped refuge names itself; otherwise
+    // the typed text is the only name there is.
+    val destinationLabel = destination?.name
+        ?: submittedDestination.ifBlank { "your destination" }
+
+    LaunchedEffect(
+        destination?.id,
+        submittedOrigin,
+        submittedDestination,
+        retryCount,
+        pinnedOrigin,
+        sensoryFilter
+    ) {
+        state = RoutesUiState.Loading
+        val destinationQuery = submittedDestination.ifBlank { destination?.name.orEmpty() }
+        if (destinationQuery.isBlank()) {
+            // Reached with no refuge selected and nothing typed, which happens
+            // when the landmark API has returned nothing to pick from.
+            state = RoutesUiState.Error(
+                "Type where you want to go, and this page will score the walking " +
+                    "routes to it."
+            )
+            return@LaunchedEffect
+        }
+        state = try {
+            // "My location" is a marker the user picked from the suggestions, not
+            // a place name - sending it to the geocoder would just fail. A blank
+            // box has always meant the same thing, so both resolve here.
+            //
+            // The device position comes first. The suggestion says "use where you
+            // are now", and a pinned location is a place the user chose to browse
+            // around, not a claim about where they are standing - routing from it
+            // would send them walking from somewhere they are not. The pin only
+            // stands in when there is no fix to be had.
+            suspend fun whereTheUserIs(): GeoPoint =
+                locationProvider.currentLocation() ?: pinnedOrigin
+                    ?: throw OriginUnavailableException()
+
+            val origin = if (submittedOrigin.isBlank() || submittedOrigin.isMyLocation()) {
+                whereTheUserIs()
+            } else {
+                placeGeocoder.resolve(submittedOrigin)
+                    ?: throw PlaceNotFoundException(submittedOrigin)
+            }
+
+            val target = when {
+                destinationQuery.isMyLocation() -> whereTheUserIs()
+                // Unedited: use the refuge's own coordinates rather than
+                // round-tripping its name through the geocoder.
+                destination != null &&
+                    destinationQuery.equals(destination.name, ignoreCase = true) ->
+                    destination.toGeoPoint()
+                else -> placeGeocoder.resolve(destinationQuery)
+                    ?: throw PlaceNotFoundException(destinationQuery)
+            }
+
+            // Banded against the user's own thresholds rather than the server's.
+            // The repository caches by trip, so re-running this for a changed
+            // filter re-bands the routes without another network call.
+            val result = routeRepository.getRoutes(origin, target)
+                .withThresholds(sensoryFilter)
+            onRoutesLoaded(result.routes)
+            RoutesUiState.Loaded(origin, target, result)
+        } catch (cancellation: CancellationException) {
+            throw cancellation
+        } catch (error: Exception) {
+            RoutesUiState.Error(error.toUserMessage())
+        }
+    }
+
+    // Hands the route to the system share sheet, where the user picks who gets
+    // it - nothing is sent from here. The maps link is built from the resolved
+    // endpoints so the recipient gets a route they can actually open.
+    val shareRoute: (ScoredRoute) -> Unit = { route ->
+        val trip = state as? RoutesUiState.Loaded
+        val body = buildList {
+            add("SenseNav walking route to $destinationLabel")
+            add(
+                listOfNotNull(
+                    route.summary.takeIf { it.isNotBlank() },
+                    route.durationText.takeIf { it.isNotBlank() },
+                    route.distanceText.takeIf { it.isNotBlank() }
+                ).joinToString(" - ")
+            )
+            if (route.isScored) add("${route.sensitivity} sensory load")
+            trip?.let {
+                add(
+                    "https://www.google.com/maps/dir/?api=1" +
+                        "&origin=${it.origin.latitude},${it.origin.longitude}" +
+                        "&destination=${it.destination.latitude},${it.destination.longitude}" +
+                        "&travelmode=walking"
+                )
+            }
+        }.joinToString("\n")
+
+        val send = Intent(Intent.ACTION_SEND).apply {
+            type = "text/plain"
+            putExtra(Intent.EXTRA_SUBJECT, "SenseNav route to $destinationLabel")
+            putExtra(Intent.EXTRA_TEXT, body)
+        }
+        runCatching { context.startActivity(Intent.createChooser(send, "Share route")) }
+    }
+
+    val submitPlaces = {
+        keyboard?.hide()
+        submittedOrigin = originInput.trim()
+        submittedDestination = destinationInput.trim()
+    }
+
+    val loaded = state as? RoutesUiState.Loaded
+    val ranked = loaded?.result?.routes?.rankedBySensory().orEmpty()
+
+    LaunchedEffect(ranked) {
+        val hasHighRiskRoute = ranked.any { route ->
+            route.sensitivity == Sensitivity.High
+        }
+
+        if (hasHighRiskRoute) {
+            showHighRiskAlert = true
+        }
+    }
+
+    // A new set of routes invalidates the old pick.
+    LaunchedEffect(ranked) { chosenRouteIndex = 0 }
+
+    /** Stable across refetches, so a saved route stays saved when routes reload. */
+    fun routeKey(route: ScoredRoute) = "$destinationLabel|${route.summary}|${route.distanceText}"
+
+    // Frame the whole trip once geometry arrives, and again when the panel
+    // collapses - the map just gained the space the panel was using.
+    LaunchedEffect(ranked, panelExpanded) {
+        val allPoints = ranked.flatMap { it.path }
+        if (allPoints.size < 2) return@LaunchedEffect
+        val bounds = LatLngBounds.builder()
+            .apply { allPoints.forEach { include(it.toLatLng()) } }
+            .build()
+        runCatching {
+            cameraPositionState.animate(CameraUpdateFactory.newLatLngBounds(bounds, 120))
+        }.onFailure {
+            // Bounds animation needs a laid-out map; fall back to centring.
+            cameraPositionState.animate(
+                CameraUpdateFactory.newLatLngZoom(bounds.center, 14f)
+            )
+        }
+    }
+
+    if (showHighRiskAlert) {
+        AlertDialog(
+            onDismissRequest = {
+                showHighRiskAlert = false
+            },
+            title = {
+                Text("Sensory Overload Warning")
+            },
+            text = {
+                Text(
+                    "A high sensory-load route has been detected. " +
+                            "You may want to review the warning before continuing."
+                )
+            },
+            confirmButton = {
+                TextButton(
+                    onClick = {
+                        showHighRiskAlert = false
+                        // Opens the warning on the route it is actually about,
+                        // rather than on whatever the page picks by default.
+                        onWarning(ranked.firstOrNull { it.sensitivity == Sensitivity.High })
+                    }
+                ) {
+                    Text("View Warning")
+                }
+            },
+            dismissButton = {
+                TextButton(
+                    onClick = {
+                        showHighRiskAlert = false
+                    }
+                ) {
+                    Text("Dismiss")
+                }
+            }
+        )
+    }
+
+    Column(modifier = Modifier.fillMaxSize().background(Color.White)) {
+        Box(modifier = Modifier.fillMaxWidth().weight(1f)) {
+            SenseNavMap(
+                modifier = Modifier.fillMaxSize(),
+                // The chosen route is the solid one; the rest are dimmed context.
+                routes = ranked.mapIndexed { index, route ->
+                    route.toMapRoute(isDimmed = index != chosenRouteIndex)
+                },
+                origin = loaded?.origin?.toLatLng(),
+                destination = loaded?.destination?.toLatLng(),
+                originColor = SenseBlue,
+                destinationColor = SensePink,
+                cameraPositionState = cameraPositionState,
+                // Collapsed, there is no planner card to keep the route clear of.
+                contentPadding = PaddingValues(top = if (panelExpanded) 300.dp else 80.dp)
+            )
+            if (panelExpanded) {
+                RoutePlannerCard(
+                    originInput = originInput,
+                    onOriginInputChange = { originInput = it },
+                    destinationInput = destinationInput,
+                    onDestinationInputChange = { destinationInput = it },
+                    onSubmit = submitPlaces,
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(horizontal = 16.dp)
+                        // Clears the back button sitting above it.
+                        .padding(top = 90.dp)
+                )
+            }
+            // Kept in both states: collapsing hides the planner, not the way out.
+            BackButton(
+                onClick = onBack,
+                modifier = Modifier
+                    .align(Alignment.TopStart)
+                    .padding(start = 16.dp, top = 34.dp)
+            )
+            // Sits opposite the back button, and stays put when the panel
+            // collapses for the same reason it does. Changing a threshold here
+            // re-bands the routes already on screen.
+            RoundIconButton(
+                iconRes = R.drawable.ic_filter,
+                contentDescription = "Filter",
+                onClick = onFilter,
+                modifier = Modifier
+                    .align(Alignment.TopEnd)
+                    .padding(end = 16.dp, top = 34.dp)
+            )
+        }
+
+        Surface(
+            modifier = Modifier.fillMaxWidth(),
+            color = Color.White,
+            shadowElevation = 10.dp,
+            shape = RoundedCornerShape(topStart = 24.dp, topEnd = 24.dp)
+        ) {
+            Column {
+                // Drag down to collapse, up to restore. Tapping does the same, so
+                // the panel is reachable without a sustained gesture.
+                Box(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .draggable(
+                            state = panelDragState,
+                            orientation = Orientation.Vertical,
+                            onDragStopped = {
+                                if (panelDrag > panelDragThreshold) panelExpanded = false
+                                if (panelDrag < -panelDragThreshold) panelExpanded = true
+                                panelDrag = 0f
+                            }
+                        )
+                        .clickable { panelExpanded = !panelExpanded }
+                        .padding(vertical = 10.dp),
+                    contentAlignment = Alignment.Center
+                ) {
+                    Box(
+                        modifier = Modifier
+                            .width(40.dp)
+                            .height(4.dp)
+                            .clip(RoundedCornerShape(2.dp))
+                            .background(Color(0xFFD3DAE6))
+                    )
+                }
+
+                if (panelExpanded) {
+                    Column(
+                        modifier = Modifier.padding(start = 20.dp, end = 20.dp, bottom = 20.dp)
+                    ) {
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            Text(
+                                "Route Options",
+                                modifier = Modifier.weight(1f),
+                                color = SenseInk,
+                                fontSize = 21.sp,
+                                fontWeight = FontWeight.Bold
+                            )
+                            RoundIconButton(R.drawable.ic_close, "Close", onBack)
+                        }
+                        Spacer(modifier = Modifier.height(8.dp))
+
+                        when (val current = state) {
+                            is RoutesUiState.Loading -> RoutesLoading()
+
+                            is RoutesUiState.Error -> RoutesError(
+                                message = current.message,
+                                onRetry = { retryCount++ }
+                            )
+
+                            is RoutesUiState.Loaded -> {
+                                if (!current.result.isScored) {
+                                    // No sensor coverage: must not imply a rating.
+                                    Text(
+                                        text = "No pedestrian sensor coverage for this " +
+                                            "trip - showing the plain walking route.",
+                                        color = SenseMuted,
+                                        fontSize = 12.sp,
+                                        lineHeight = 16.sp
+                                    )
+                                    Spacer(modifier = Modifier.height(12.dp))
+                                }
+                                ranked.forEachIndexed { index, route ->
+                                    val key = routeKey(route)
+                                    RouteCard(
+                                        route = route,
+                                        isRecommended = index == 0 && current.result.isScored,
+                                        isChosen = index == chosenRouteIndex,
+                                        isSaved = savedRoutes.any { it.id == key },
+                                        onChoose = { chosenRouteIndex = index },
+                                        onShare = { shareRoute(route) },
+                                        onToggleSave = {
+                                            onToggleSavedRoute(
+                                                SavedRoute(
+                                                    id = key,
+                                                    summary = route.summary,
+                                                    destinationName = destinationLabel,
+                                                    durationText = route.durationText,
+                                                    distanceText = route.distanceText,
+                                                    sensitivityLabel = if (route.isScored) {
+                                                        route.sensitivity.name
+                                                    } else {
+                                                        "Unrated"
+                                                    }
+                                                )
+                                            )
+                                        }
+                                    )
+                                    Spacer(modifier = Modifier.height(14.dp))
+                                }
+
+                                // Choosing has to lead somewhere: this is where the
+                                // old Directions button's job went, applied to
+                                // whichever route the user settled on. A busy
+                                // route still starts - the alert above has already
+                                // said so, and refusing to walk it would be the
+                                // app overriding a choice the user has made.
+                                ranked.getOrNull(chosenRouteIndex)?.let { chosen ->
+                                    Button(
+                                        modifier = Modifier.fillMaxWidth(),
+                                        onClick = {
+                                            onStart(
+                                                NavigationPlan(
+                                                    route = chosen,
+                                                    alternatives = ranked.filterNot { it === chosen },
+                                                    origin = current.origin,
+                                                    destination = current.destination,
+                                                    destinationName = submittedDestination
+                                                        .ifBlank { destinationLabel }
+                                                )
+                                            )
+                                        },
+                                        colors = ButtonDefaults.buttonColors(
+                                            containerColor = SenseBlue
+                                        ),
+                                        shape = RoundedCornerShape(14.dp)
+                                    ) {
+                                        Text("Start - ${chosen.durationText}")
+                                    }
+                                }
+                            }
+                        }
+                    }
+                } else {
+                    // Collapsed: enough to say what is on the map, without taking
+                    // any of it back.
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .clickable { panelExpanded = true }
+                            .padding(horizontal = 20.dp)
+                            .padding(bottom = 14.dp),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Text(
+                            text = ranked.firstOrNull()
+                                ?.let { "${it.durationText} - ${it.summary}" }
+                                ?: "Route options",
+                            modifier = Modifier.weight(1f),
+                            color = SenseInk,
+                            fontSize = 13.sp,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis
+                        )
+                        Text(
+                            text = "Show",
+                            color = SenseBlue,
+                            fontSize = 12.sp,
+                            fontWeight = FontWeight.Bold
+                        )
+                    }
+                }
+            }
+        }
+    }
+}
+
+/**
+ * Both ends are free text; a blank origin means "start from my location".
+ *
+ * [onSubmit] fires on the keyboard's enter/search key, [onRoute] on the button.
+ * The routing screen points both at the same handler; the search screen keeps
+ * them apart, so enter runs a search and the button opens the route options.
+ */
+@Composable
+private fun RoutePlannerCard(
+    originInput: String,
+    onOriginInputChange: (String) -> Unit,
+    destinationInput: String,
+    onDestinationInputChange: (String) -> Unit,
+    onSubmit: () -> Unit,
+    modifier: Modifier = Modifier,
+    destinationFocusRequester: FocusRequester? = null,
+    onRoute: () -> Unit = onSubmit
+) {
+    Card(
+        modifier = modifier,
+        shape = RoundedCornerShape(18.dp),
+        colors = CardDefaults.cardColors(containerColor = Color.White),
+        elevation = CardDefaults.cardElevation(defaultElevation = 6.dp)
+    ) {
+        Column(modifier = Modifier.padding(14.dp)) {
+            PlaceField(
+                marker = { OriginDot() },
+                value = originInput,
+                onValueChange = onOriginInputChange,
+                placeholder = "Your location",
+                imeAction = ImeAction.Next,
+                onSubmit = onSubmit
+            )
+
+            EndpointConnector()
+
+            PlaceField(
+                marker = { DestinationDot() },
+                value = destinationInput,
+                onValueChange = onDestinationInputChange,
+                placeholder = "Where to?",
+                imeAction = ImeAction.Search,
+                onSubmit = onSubmit,
+                modifier = destinationFocusRequester
+                    ?.let { Modifier.focusRequester(it) }
+                    ?: Modifier
+            )
+
+            Spacer(modifier = Modifier.height(10.dp))
+            Button(
+                modifier = Modifier.fillMaxWidth(),
+                onClick = onRoute,
+                enabled = destinationInput.isNotBlank(),
+                colors = ButtonDefaults.buttonColors(containerColor = SenseBlue),
+                shape = RoundedCornerShape(12.dp)
+            ) {
+                Text("Route")
+            }
+        }
+    }
+}
+
+/** Hollow ring for the start point, mirroring the usual maps convention. */
+@Composable
+private fun OriginDot() {
+    Box(
+        modifier = Modifier
+            .size(14.dp)
+            .clip(CircleShape)
+            .background(Color.White)
+            .border(width = 3.dp, color = SenseBlue, shape = CircleShape)
+    )
+}
+
+/** Solid rounded square for the destination, so the two ends read differently. */
+@Composable
+private fun DestinationDot() {
+    Box(
+        modifier = Modifier
+            .size(12.dp)
+            .clip(RoundedCornerShape(3.dp))
+            .background(SensePink)
+    )
+}
+
+/** The trail of dots joining the two endpoint markers. */
+@Composable
+private fun EndpointConnector() {
+    Row(modifier = Modifier.fillMaxWidth()) {
+        Canvas(
+            modifier = Modifier
+                .width(MarkerColumnWidth)
+                .height(18.dp)
+        ) {
+            val centreX = size.width / 2f
+            val step = 6.dp.toPx()
+            val radius = 1.6.dp.toPx()
+            var y = step / 2f
+            while (y < size.height) {
+                drawCircle(
+                    color = SenseMuted.copy(alpha = 0.45f),
+                    radius = radius,
+                    center = Offset(centreX, y)
+                )
+                y += step
+            }
+        }
+    }
+}
+
+private val MarkerColumnWidth = 22.dp
+
+@Composable
+private fun PlaceField(
+    marker: @Composable () -> Unit,
+    value: String,
+    onValueChange: (String) -> Unit,
+    placeholder: String,
+    imeAction: ImeAction,
+    onSubmit: () -> Unit,
+    modifier: Modifier = Modifier
+) {
+    val focusManager = LocalFocusManager.current
+
+    // Every place box in the app is one of these, so offering the suggestion
+    // here is what puts it on the search page and the route planner alike.
+    Column {
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            Box(
+                modifier = Modifier.width(MarkerColumnWidth),
+                contentAlignment = Alignment.Center
+            ) {
+                marker()
+            }
+            Spacer(modifier = Modifier.width(6.dp))
+            OutlinedTextField(
+                value = value,
+                onValueChange = onValueChange,
+                modifier = Modifier.weight(1f).then(modifier),
+                placeholder = { Text(placeholder, fontSize = 14.sp) },
+                singleLine = true,
+                shape = RoundedCornerShape(12.dp),
+                colors = senseTextFieldColors(),
+                keyboardOptions = KeyboardOptions(imeAction = imeAction),
+                keyboardActions = KeyboardActions(
+                    // "Next" moves From -> To; only "Search" fires the request.
+                    onNext = { focusManager.moveFocus(FocusDirection.Down) },
+                    onSearch = { onSubmit() }
+                ),
+                trailingIcon = {
+                    if (value.isNotBlank()) {
+                        TextButton(onClick = { onValueChange("") }) {
+                            Text("Clear", color = SenseMuted, fontSize = 11.sp)
+                        }
+                    }
+                }
+            )
+        }
+
+        if (matchesMyLocation(value)) {
+            MyLocationSuggestion(
+                onClick = {
+                    onValueChange(MY_LOCATION_LABEL)
+                    focusManager.clearFocus()
+                }
+            )
+        }
+    }
+}
+
+/**
+ * Pinned explicitly rather than inherited, so these fields stay legible even if
+ * the colour scheme changes again.
+ */
+@Composable
+private fun senseTextFieldColors() = OutlinedTextFieldDefaults.colors(
+    focusedTextColor = SenseInk,
+    unfocusedTextColor = SenseInk,
+    disabledTextColor = SenseMuted,
+    focusedContainerColor = Color.White,
+    unfocusedContainerColor = Color.White,
+    cursorColor = SenseBlue,
+    focusedBorderColor = SenseBlue,
+    unfocusedBorderColor = Color(0xFFD8DEE9),
+    focusedPlaceholderColor = SenseMuted,
+    unfocusedPlaceholderColor = SenseMuted
+)
+
+@Composable
+private fun RoutesLoading() {
+    Row(
+        modifier = Modifier.fillMaxWidth().padding(vertical = 24.dp),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.Center
+    ) {
+        CircularProgressIndicator(modifier = Modifier.size(22.dp), color = SenseBlue)
+        Spacer(modifier = Modifier.width(14.dp))
+        Text("Scoring routes nearby...", color = SenseMuted, fontSize = 14.sp)
+    }
+}
+
+@Composable
+private fun RoutesError(message: String, onRetry: () -> Unit) {
+    Column(modifier = Modifier.fillMaxWidth().padding(vertical = 12.dp)) {
+        Text("Couldn't load routes", color = SenseInk, fontSize = 16.sp, fontWeight = FontWeight.Bold)
+        Spacer(modifier = Modifier.height(6.dp))
+        Text(message, color = SenseMuted, fontSize = 13.sp, lineHeight = 18.sp)
+        Spacer(modifier = Modifier.height(14.dp))
+        Button(
+            onClick = onRetry,
+            colors = ButtonDefaults.buttonColors(containerColor = SenseBlue),
+            shape = RoundedCornerShape(12.dp)
+        ) {
+            Text("Try again")
+        }
+    }
+}
+
+/**
+ * Walks the user along the route they chose.
+ *
+ * The scoring API returns geometry and a total duration, not a manoeuvre list,
+ * so the steps here are read off the polyline itself by [buildRouteGuidance] and
+ * the time remaining is the quoted duration scaled by how much path is left.
+ * Both are honest approximations and the screen says so rather than dressing
+ * them up as a provider's turn-by-turn feed.
+ *
+ * Position is polled rather than streamed. Without permission - or before the
+ * first fix - the screen still works: it shows the whole route and the full step
+ * list instead of pretending to know where the user is.
+ */
+@Composable
+private fun NavigationScreen(
+    plan: NavigationPlan,
+    onBack: () -> Unit,
+    onFinish: () -> Unit,
+    onWarning: () -> Unit
+) {
+    val context = LocalContext.current
+    val locationProvider = remember(context) { LocationProvider(context) }
+    val route = plan.route
+
+    val guidance = remember(route.path, plan.destinationName) {
+        buildRouteGuidance(route.path, plan.destinationName)
+    }
+    val totalMinutes = remember(route.durationText, guidance.totalMeters) {
+        parseDurationMinutes(route.durationText)
+            ?: (guidance.totalMeters / WalkingMetersPerMinute).roundToInt().coerceAtLeast(1)
+    }
+
+    var position by remember { mutableStateOf<GeoPoint?>(null) }
+    // High load is announced once, on arrival at this screen. Repeating it every
+    // time the reading crosses the line would be nagging someone who has already
+    // decided, on a screen they are walking with.
+    var showLoadAlert by remember(route) {
+        mutableStateOf(route.sensitivity == Sensitivity.High)
+    }
+
+    // Asked afresh each tick, so permission granted after this screen opened
+    // starts working without leaving and coming back.
+    LaunchedEffect(Unit) {
+        while (true) {
+            locationProvider.currentLocation()?.let { position = it }
+            delay(PositionPollMillis)
+        }
+    }
+
+    val progress = remember(position, guidance) { position?.let { guidance.progressAt(it) } }
+    val traveled = progress?.traveledMeters ?: 0.0
+    val remainingMeters = progress?.remainingMeters ?: guidance.totalMeters
+    val remainingMinutes = if (guidance.totalMeters > 0.0) {
+        (totalMinutes * remainingMeters / guidance.totalMeters).roundToInt()
+    } else {
+        totalMinutes
+    }
+    val arrivalLabel = remember(remainingMinutes) {
+        runCatching {
+            LocalTime.now()
+                .plusMinutes(remainingMinutes.toLong())
+                .format(DateTimeFormatter.ofPattern("h:mm a"))
+        }.getOrNull()
+    }
+    val upcoming = guidance.stepsAfter(traveled)
+    val nextStep = upcoming.firstOrNull()
+    val arrived = progress?.hasArrived == true
+
+    val cameraPositionState = rememberSenseNavCameraState(
+        target = plan.origin.toLatLng(),
+        zoom = 16.5f
+    )
+
+    // Follows the user once there is a fix to follow; until then it frames the
+    // whole trip, which is the more useful view when the dot is missing.
+    LaunchedEffect(position, guidance) {
+        val here = position
+        if (here != null) {
+            runCatching {
+                cameraPositionState.animate(
+                    CameraUpdateFactory.newLatLngZoom(here.toLatLng(), 17f)
+                )
+            }
+        } else if (route.path.size >= 2) {
+            val bounds = LatLngBounds.builder()
+                .apply { route.path.forEach { include(it.toLatLng()) } }
+                .build()
+            runCatching {
+                cameraPositionState.animate(CameraUpdateFactory.newLatLngBounds(bounds, 110))
+            }.onFailure {
+                cameraPositionState.animate(
+                    CameraUpdateFactory.newLatLngZoom(bounds.center, 14f)
+                )
+            }
+        }
+    }
+
+    if (showLoadAlert) {
+        AlertDialog(
+            onDismissRequest = { showLoadAlert = false },
+            title = { Text("High sensory load on this route") },
+            text = {
+                Text(
+                    text = buildString {
+                        append("The route you are starting is rated ")
+                        append("${route.sensitivity} sensory load")
+                        route.avgPedestrianCount?.let {
+                            append(" - about ${it.roundToInt()} people per minute on the ")
+                            append("footpath sensors nearest it")
+                        }
+                        append(". You can still walk it; the details page explains what ")
+                        append("the reading means and what the quieter options cost you.")
+                    }
+                )
+            },
+            confirmButton = {
+                TextButton(
+                    onClick = {
+                        showLoadAlert = false
+                        onWarning()
+                    }
+                ) {
+                    Text("View details")
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = { showLoadAlert = false }) { Text("Continue") }
+            }
+        )
+    }
+
+    Column(modifier = Modifier.fillMaxSize().background(Color.White)) {
+        Box(modifier = Modifier.fillMaxWidth().weight(1f)) {
+            SenseNavMap(
+                modifier = Modifier.fillMaxSize(),
+                routes = listOf(route.toMapRoute()),
+                origin = plan.origin.toLatLng(),
+                destination = plan.destination.toLatLng(),
+                originColor = SenseBlue,
+                destinationColor = SensePink,
+                cameraPositionState = cameraPositionState,
+                enableMyLocation = true,
+                contentPadding = PaddingValues(top = 190.dp)
+            )
+
+            BackButton(
+                onClick = onBack,
+                modifier = Modifier
+                    .align(Alignment.TopStart)
+                    .padding(start = 16.dp, top = 34.dp)
+            )
+
+            NavigationInstructionCard(
+                step = nextStep,
+                followingStep = upcoming.getOrNull(1),
+                distanceToStep = nextStep
+                    ?.let { it.distanceFromStartMeters - traveled }
+                    ?.coerceAtLeast(0.0),
+                hasFix = position != null,
+                arrived = arrived,
+                destinationName = plan.destinationName,
+                modifier = Modifier
+                    .align(Alignment.TopCenter)
+                    .padding(horizontal = 16.dp)
+                    .padding(top = 88.dp)
+            )
+        }
+
+        Surface(
+            modifier = Modifier.fillMaxWidth(),
+            color = Color.White,
+            shadowElevation = 10.dp,
+            shape = RoundedCornerShape(topStart = 24.dp, topEnd = 24.dp)
+        ) {
+            Column(modifier = Modifier.padding(20.dp)) {
+                Row(verticalAlignment = Alignment.Bottom) {
+                    Text(
+                        text = if (arrived) "Arrived" else formatMinutes(remainingMinutes),
+                        color = SenseInk,
+                        fontSize = 24.sp,
+                        fontWeight = FontWeight.Bold
+                    )
+                    Spacer(modifier = Modifier.width(10.dp))
+                    Text(
+                        text = if (arrived) {
+                            "at ${plan.destinationName}"
+                        } else {
+                            listOfNotNull(
+                                formatMeters(remainingMeters),
+                                arrivalLabel?.let { "arrive around $it" }
+                            ).joinToString(" - ")
+                        },
+                        modifier = Modifier.weight(1f),
+                        color = SenseMuted,
+                        fontSize = 13.sp
+                    )
+                }
+
+                Spacer(modifier = Modifier.height(12.dp))
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Box(
+                        modifier = Modifier
+                            .size(12.dp)
+                            .clip(CircleShape)
+                            .background(if (route.isScored) route.displayColor() else SenseMuted)
+                    )
+                    Spacer(modifier = Modifier.width(8.dp))
+                    Text(
+                        text = if (route.isScored) {
+                            "${route.sensitivity} sensory load" +
+                                (route.avgPedestrianCount
+                                    ?.let { " - ~${it.roundToInt()} people/min nearby" }
+                                    ?: "")
+                        } else {
+                            "No sensor data for this route"
+                        },
+                        modifier = Modifier.weight(1f),
+                        color = if (route.isScored) route.displayColor() else SenseMuted,
+                        fontSize = 13.sp,
+                        fontWeight = FontWeight.Bold
+                    )
+                    TextButton(onClick = onWarning) {
+                        Text("Details", color = SenseBlue, fontSize = 12.sp)
+                    }
+                }
+
+                // Said plainly rather than silently re-planning: this app does not
+                // reroute someone without being asked.
+                if (progress?.isOffRoute == true) {
+                    Text(
+                        text = "You are about ${formatMeters(progress.offRouteMeters)} from " +
+                            "this route. Head back to the line, or pick another route.",
+                        color = SensePink,
+                        fontSize = 12.sp,
+                        lineHeight = 16.sp
+                    )
+                    Spacer(modifier = Modifier.height(8.dp))
+                }
+
+                if (!arrived && upcoming.size > 1) {
+                    Spacer(modifier = Modifier.height(6.dp))
+                    Text(
+                        text = "Steps ahead",
+                        color = SenseInk,
+                        fontSize = 14.sp,
+                        fontWeight = FontWeight.Bold
+                    )
+                    Column(
+                        modifier = Modifier
+                            .heightIn(max = 132.dp)
+                            .verticalScroll(rememberScrollState())
+                    ) {
+                        upcoming.drop(1).forEach { step ->
+                            NavStepRow(step)
+                        }
+                    }
+                }
+
+                Spacer(modifier = Modifier.height(12.dp))
+                Button(
+                    modifier = Modifier.fillMaxWidth(),
+                    onClick = onFinish,
+                    colors = ButtonDefaults.buttonColors(
+                        containerColor = if (arrived) SenseBlue else SenseSoftBlue,
+                        contentColor = if (arrived) Color.White else SenseBlue
+                    ),
+                    shape = RoundedCornerShape(14.dp)
+                ) {
+                    Text(if (arrived) "Done" else "End navigation")
+                }
+            }
+        }
+    }
+}
+
+/** The manoeuvre being walked towards, over the top of the map. */
+@Composable
+private fun NavigationInstructionCard(
+    step: NavStep?,
+    followingStep: NavStep?,
+    distanceToStep: Double?,
+    hasFix: Boolean,
+    arrived: Boolean,
+    destinationName: String,
+    modifier: Modifier = Modifier
+) {
+    Card(
+        modifier = modifier.fillMaxWidth(),
+        shape = RoundedCornerShape(18.dp),
+        colors = CardDefaults.cardColors(containerColor = Color.White),
+        elevation = CardDefaults.cardElevation(defaultElevation = 6.dp)
+    ) {
+        Column(modifier = Modifier.padding(16.dp)) {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Box(
+                    modifier = Modifier
+                        .size(44.dp)
+                        .clip(RoundedCornerShape(12.dp))
+                        .background(SenseSoftBlue),
+                    contentAlignment = Alignment.Center
+                ) {
+                    Text(
+                        text = if (arrived) "End" else step?.maneuver?.badge ?: "Go",
+                        color = SenseBlue,
+                        fontSize = 11.sp,
+                        fontWeight = FontWeight.Bold
+                    )
+                }
+                Spacer(modifier = Modifier.width(12.dp))
+                Column(modifier = Modifier.weight(1f)) {
+                    Text(
+                        text = when {
+                            arrived -> "You have arrived at $destinationName"
+                            step != null -> step.instruction
+                            else -> "Follow the route to $destinationName"
+                        },
+                        color = SenseInk,
+                        fontSize = 18.sp,
+                        lineHeight = 22.sp,
+                        fontWeight = FontWeight.Bold
+                    )
+                    if (!arrived) {
+                        Text(
+                            text = when {
+                                // No fix means no honest "in 200 m" - the steps
+                                // below are the guidance until one arrives.
+                                !hasFix -> "Waiting for your location - the full step list is below"
+                                distanceToStep != null -> "in ${formatMeters(distanceToStep)}"
+                                else -> "Keep going"
+                            },
+                            color = SenseMuted,
+                            fontSize = 13.sp
+                        )
+                    }
+                }
+            }
+            if (!arrived && followingStep != null) {
+                Spacer(modifier = Modifier.height(8.dp))
+                Text(
+                    text = "then ${followingStep.instruction.lowercase()} " +
+                        "after ${formatMeters(followingStep.legMeters)}",
+                    color = SenseMuted,
+                    fontSize = 12.sp
+                )
+            }
+        }
+    }
+}
+
+/** One upcoming manoeuvre in the list under the map. */
+@Composable
+private fun NavStepRow(step: NavStep) {
+    Row(
+        modifier = Modifier.fillMaxWidth().padding(vertical = 8.dp),
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        Box(
+            modifier = Modifier.size(30.dp).clip(CircleShape).background(ScreenBg),
+            contentAlignment = Alignment.Center
+        ) {
+            Text(step.maneuver.badge, color = SenseMuted, fontSize = 8.sp, fontWeight = FontWeight.Bold)
+        }
+        Spacer(modifier = Modifier.width(12.dp))
+        Text(
+            text = step.instruction,
+            modifier = Modifier.weight(1f),
+            color = SenseInk,
+            fontSize = 13.sp,
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis
+        )
+        Text(
+            text = "after ${formatMeters(step.legMeters)}",
+            color = SenseMuted,
+            fontSize = 12.sp
+        )
+    }
+}
+
+/** How often the device position is re-read while navigating. */
+private const val PositionPollMillis = 4_000L
+
+/**
+ * Average walking pace, used only when a route's duration text cannot be parsed.
+ * Roughly 4.8 km/h, which is what Google Directions assumes for walking.
+ */
+private const val WalkingMetersPerMinute = 80.0
+
+/**
+ * What a sensory warning actually rests on, for the route it was raised about.
+ *
+ * Everything on this page is derived from the routes just scored and the bands
+ * the user set for themselves: the reading, where it sits against their own High
+ * cut-off, what the alternatives cost in time, and which calm places sit close
+ * enough to the line to duck into. Nothing here is a stored advisory about a
+ * place - the API has no such feed, and inventing one was the old page's central
+ * problem.
+ */
+@Composable
+private fun WarningScreen(
+    routes: List<ScoredRoute>,
+    focusRoute: ScoredRoute?,
+    filter: SensoryFilter,
+    refuges: List<Refuge>,
+    destinationName: String,
+    onBack: () -> Unit,
+    onReroute: () -> Unit,
+    onUseRoute: (ScoredRoute) -> Unit
+) {
+    // The route the user came here about; failing that, the busiest of the last
+    // set scored, which is the one a bare "Alert" tap is asking about.
+    val flagged = focusRoute ?: routes.maxByOrNull { it.avgPedestrianCount ?: 0.0 }
+
+    if (flagged == null) {
+        NoRouteWarningScreen(onBack = onBack, onPlanRoute = onReroute)
+        return
+    }
+
+    val alternatives = remember(routes, flagged) {
+        routes.filterNot { it == flagged }.rankedBySensory()
+    }
+    val flaggedMinutes = remember(flagged) { parseDurationMinutes(flagged.durationText) }
+
+    // Calm places close enough to the route to be worth knowing about mid-walk.
+    // Measured to the nearest point on the path rather than to the destination,
+    // because the question this answers is "where can I stop on the way".
+    val calmNearRoute = remember(flagged, refuges) {
+        val sampled = flagged.path.filterIndexed { index, _ -> index % 5 == 0 }
+            .ifEmpty { flagged.path }
+        refuges.asSequence()
+            .map { refuge ->
+                refuge to sampled.minOf { it.distanceTo(refuge.toGeoPoint()) }
+            }
+            .filter { it.second <= CalmNearRouteMeters }
+            .sortedBy { it.second }
+            .take(3)
+            .toList()
+    }
+
+    val cameraPositionState = rememberSenseNavCameraState(
+        target = flagged.path[flagged.path.size / 2].toLatLng(),
+        zoom = 14.5f
+    )
+
+    LaunchedEffect(flagged) {
+        if (flagged.path.size < 2) return@LaunchedEffect
+        val bounds = LatLngBounds.builder()
+            .apply { flagged.path.forEach { include(it.toLatLng()) } }
+            .build()
+        runCatching {
+            cameraPositionState.animate(CameraUpdateFactory.newLatLngBounds(bounds, 110))
+        }
+    }
+
+    Column(modifier = Modifier.fillMaxSize().background(Color.White)) {
+        // Fixed height rather than a weight: the panel below scrolls, and a map
+        // inside a scrolling column swallows the drag that should move the page.
+        Box(modifier = Modifier.fillMaxWidth().height(220.dp)) {
+            SenseNavMap(
+                modifier = Modifier.fillMaxSize(),
+                routes = listOf(flagged.toMapRoute()) +
+                    alternatives.map { it.toMapRoute(isDimmed = true) },
+                cameraPositionState = cameraPositionState,
+                contentPadding = PaddingValues(top = 70.dp)
+            )
+            BackButton(
+                onClick = onBack,
+                modifier = Modifier.padding(start = 18.dp, top = 24.dp)
+            )
+        }
+
+        Surface(
+            modifier = Modifier.fillMaxWidth().weight(1f),
+            color = Color.White,
+            shadowElevation = 10.dp,
+            shape = RoundedCornerShape(topStart = 28.dp, topEnd = 28.dp)
+        ) {
+            Column(
+                modifier = Modifier
+                    .verticalScroll(rememberScrollState())
+                    .padding(horizontal = 24.dp, vertical = 22.dp)
+            ) {
+                Text(
+                    text = if (flagged.isScored) {
+                        "${flagged.sensitivity} sensory load"
+                    } else {
+                        "No sensory rating for this route"
+                    },
+                    color = if (flagged.isScored) flagged.displayColor() else SenseInk,
+                    fontSize = 22.sp,
+                    fontWeight = FontWeight.Bold
+                )
+                Text(
+                    text = listOfNotNull(
+                        "${flagged.summary} to $destinationName",
+                        flagged.durationText.takeIf { it.isNotBlank() },
+                        flagged.distanceText.takeIf { it.isNotBlank() }
+                    ).joinToString(" - "),
+                    color = SenseMuted,
+                    fontSize = 13.sp,
+                    lineHeight = 18.sp
+                )
+
+                Spacer(modifier = Modifier.height(18.dp))
+                SensoryReadingPanel(route = flagged, filter = filter)
+
+                Spacer(modifier = Modifier.height(20.dp))
+                WarningSectionTitle("What this means on the ground")
+                Text(
+                    text = flagged.crowdingExplanation(),
+                    color = SenseInk,
+                    fontSize = 13.sp,
+                    lineHeight = 19.sp
+                )
+                Spacer(modifier = Modifier.height(8.dp))
+                Text(
+                    text = "The reading is an average over the footpath sensors nearest " +
+                        "this route, so individual corners can be busier or quieter than " +
+                        "the number suggests, and it moves through the day.",
+                    color = SenseMuted,
+                    fontSize = 12.sp,
+                    lineHeight = 17.sp
+                )
+
+                if (alternatives.isNotEmpty()) {
+                    Spacer(modifier = Modifier.height(22.dp))
+                    WarningSectionTitle("Your other options")
+                    Text(
+                        text = "Same start and finish, scored at the same time.",
+                        color = SenseMuted,
+                        fontSize = 12.sp
+                    )
+                    Spacer(modifier = Modifier.height(6.dp))
+                    alternatives.forEach { option ->
+                        AlternativeRouteRow(
+                            route = option,
+                            comparedWith = flagged,
+                            comparedMinutes = flaggedMinutes,
+                            onUse = { onUseRoute(option) }
+                        )
+                    }
+                }
+
+                if (calmNearRoute.isNotEmpty()) {
+                    Spacer(modifier = Modifier.height(22.dp))
+                    WarningSectionTitle("Calm places along the way")
+                    Text(
+                        text = "Somewhere to stop if it gets too much. Distances are to " +
+                            "the nearest point on this route, not to your destination.",
+                        color = SenseMuted,
+                        fontSize = 12.sp,
+                        lineHeight = 17.sp
+                    )
+                    Spacer(modifier = Modifier.height(6.dp))
+                    calmNearRoute.forEach { (refuge, meters) ->
+                        Row(
+                            modifier = Modifier.fillMaxWidth().padding(vertical = 8.dp),
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Box(
+                                modifier = Modifier
+                                    .size(30.dp)
+                                    .clip(CircleShape)
+                                    .background(SenseSoftBlue),
+                                contentAlignment = Alignment.Center
+                            ) {
+                                Text(
+                                    text = "Pin",
+                                    color = SenseBlue,
+                                    fontSize = 8.sp,
+                                    fontWeight = FontWeight.Bold
+                                )
+                            }
+                            Spacer(modifier = Modifier.width(12.dp))
+                            Column(modifier = Modifier.weight(1f)) {
+                                Text(
+                                    text = refuge.name,
+                                    color = SenseInk,
+                                    fontSize = 14.sp,
+                                    fontWeight = FontWeight.Bold,
+                                    maxLines = 1,
+                                    overflow = TextOverflow.Ellipsis
+                                )
+                                Text(
+                                    text = refuge.category,
+                                    color = SenseMuted,
+                                    fontSize = 11.sp,
+                                    maxLines = 1,
+                                    overflow = TextOverflow.Ellipsis
+                                )
+                            }
+                            Text(
+                                text = "${formatMeters(meters)} off route",
+                                color = SenseMuted,
+                                fontSize = 12.sp
+                            )
+                        }
+                    }
+                }
+
+                Spacer(modifier = Modifier.height(22.dp))
+                WarningSectionTitle("Ways to make it easier")
+                BulletLine("Take ear defenders or noise-cancelling headphones, and put them on before the busy stretch rather than during it.")
+                BulletLine("Plan a pause. A stop at one of the calm places above breaks a hard walk into two manageable ones.")
+                BulletLine("Move the trip if you can - counts on these sensors peak around the commute and lunch hours.")
+                if (alternatives.isNotEmpty()) {
+                    BulletLine("A quieter route is usually only a few minutes longer; the comparison above shows exactly how many.")
+                }
+
+                Spacer(modifier = Modifier.height(22.dp))
+                WarningSectionTitle("Where these numbers come from")
+                InfoLine(
+                    "Data source",
+                    "City of Melbourne pedestrian sensors, via the SenseNav routing service"
+                )
+                InfoLine(
+                    "Your bands",
+                    "Low under ${filter.lowMaxPedestrians}, Medium under " +
+                        "${filter.mediumMaxPedestrians}, High from " +
+                        "${filter.mediumMaxPedestrians} people/min"
+                )
+                Text(
+                    text = "Bands are yours, not the service's - change them under Filter and " +
+                        "every route is rated again against the new numbers.",
+                    color = SenseMuted,
+                    fontSize = 12.sp,
+                    lineHeight = 17.sp
+                )
+
+                Spacer(modifier = Modifier.height(22.dp))
+                Button(
+                    modifier = Modifier.fillMaxWidth(),
+                    onClick = onReroute,
+                    colors = ButtonDefaults.buttonColors(containerColor = SenseBlue),
+                    shape = RoundedCornerShape(14.dp)
+                ) {
+                    Text("Back to route options")
+                }
+                Spacer(modifier = Modifier.height(8.dp))
+            }
+        }
+    }
+}
+
+/** The reading itself, against the user's own High cut-off. */
+@Composable
+private fun SensoryReadingPanel(route: ScoredRoute, filter: SensoryFilter) {
+    Column(
+        modifier = Modifier
+            .fillMaxWidth()
+            .clip(RoundedCornerShape(16.dp))
+            .background(ScreenBg)
+            .padding(16.dp)
+    ) {
+        val count = route.avgPedestrianCount
+        Row(verticalAlignment = Alignment.Bottom) {
+            Text(
+                text = count?.let { "~${it.roundToInt()}" } ?: "No reading",
+                color = SenseInk,
+                fontSize = 30.sp,
+                fontWeight = FontWeight.Bold
+            )
+            Spacer(modifier = Modifier.width(8.dp))
+            Text(
+                text = if (count != null) "people per minute, averaged along the route" else "",
+                modifier = Modifier.weight(1f),
+                color = SenseMuted,
+                fontSize = 12.sp,
+                lineHeight = 16.sp
+            )
+        }
+
+        if (count != null) {
+            Spacer(modifier = Modifier.height(12.dp))
+            BandBar(count = count, filter = filter)
+            Spacer(modifier = Modifier.height(10.dp))
+            Text(
+                text = when (route.sensitivity) {
+                    Sensitivity.High ->
+                        "That is above your High threshold of " +
+                            "${filter.mediumMaxPedestrians} people/min."
+                    Sensitivity.Medium ->
+                        "That sits in your Medium band - between " +
+                            "${filter.lowMaxPedestrians} and " +
+                            "${filter.mediumMaxPedestrians} people/min."
+                    Sensitivity.Low ->
+                        "That is inside your Low band, under " +
+                            "${filter.lowMaxPedestrians} people/min."
+                    Sensitivity.Unknown ->
+                        "There is no band for this route, so it is shown unrated."
+                },
+                color = SenseInk,
+                fontSize = 13.sp,
+                lineHeight = 18.sp
+            )
+        } else {
+            Spacer(modifier = Modifier.height(8.dp))
+            Text(
+                text = "No pedestrian sensor covers this route, so it carries no sensory " +
+                    "rating at all - not a quiet one. Treat it as unknown.",
+                color = SenseMuted,
+                fontSize = 12.sp,
+                lineHeight = 17.sp
+            )
+        }
+    }
+}
+
+/**
+ * Where the reading falls across the three bands, drawn to the user's own
+ * thresholds. Counts past the top of the scale are pinned to the end rather than
+ * running off it.
+ */
+@Composable
+private fun BandBar(count: Double, filter: SensoryFilter) {
+    val scaleMax = maxOf(filter.mediumMaxPedestrians * 1.6, count * 1.15)
+    val lowWeight = (filter.lowMaxPedestrians / scaleMax).toFloat()
+    val mediumWeight = ((filter.mediumMaxPedestrians - filter.lowMaxPedestrians) / scaleMax).toFloat()
+    val highWeight = (1f - lowWeight - mediumWeight).coerceAtLeast(0.05f)
+    val markerFraction = (count / scaleMax).toFloat().coerceIn(0f, 1f)
+
+    Column {
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .height(10.dp)
+                .clip(RoundedCornerShape(5.dp))
+        ) {
+            Box(modifier = Modifier.weight(lowWeight).fillMaxHeight().background(SenseRiskLow))
+            Box(modifier = Modifier.weight(mediumWeight).fillMaxHeight().background(SenseRiskMedium))
+            Box(modifier = Modifier.weight(highWeight).fillMaxHeight().background(SenseRiskHigh))
+        }
+        Spacer(modifier = Modifier.height(4.dp))
+        // The marker sits under the bar on the same scale, so where the reading
+        // falls is readable without a legend.
+        Row(modifier = Modifier.fillMaxWidth()) {
+            if (markerFraction > 0f) {
+                Box(modifier = Modifier.weight(markerFraction))
+            }
+            Text("^", color = SenseInk, fontSize = 12.sp, fontWeight = FontWeight.Bold)
+            if (markerFraction < 1f) {
+                Box(modifier = Modifier.weight(1f - markerFraction))
+            }
+        }
+        // Each label sits at the left edge of the band it opens, on the same
+        // weights as the bar above, so the numbers line up with the colours.
+        Row(modifier = Modifier.fillMaxWidth()) {
+            Text(
+                text = "0",
+                modifier = Modifier.weight(lowWeight),
+                color = SenseMuted,
+                fontSize = 10.sp
+            )
+            Text(
+                text = "${filter.lowMaxPedestrians}",
+                modifier = Modifier.weight(mediumWeight),
+                color = SenseMuted,
+                fontSize = 10.sp
+            )
+            Text(
+                text = "${filter.mediumMaxPedestrians}+",
+                modifier = Modifier.weight(highWeight),
+                color = SenseMuted,
+                fontSize = 10.sp
+            )
+        }
+    }
+}
+
+/** One alternative route, with what choosing it would cost in time. */
+@Composable
+private fun AlternativeRouteRow(
+    route: ScoredRoute,
+    comparedWith: ScoredRoute,
+    comparedMinutes: Int?,
+    onUse: () -> Unit
+) {
+    val minutes = parseDurationMinutes(route.durationText)
+    val delta = if (minutes != null && comparedMinutes != null) minutes - comparedMinutes else null
+    val isQuieter = route.sensitivity.rank < comparedWith.sensitivity.rank
+
+    Row(
+        modifier = Modifier.fillMaxWidth().padding(vertical = 10.dp),
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        Box(
+            modifier = Modifier
+                .size(12.dp)
+                .clip(CircleShape)
+                .background(if (route.isScored) route.displayColor() else SenseMuted)
+        )
+        Spacer(modifier = Modifier.width(10.dp))
+        Column(modifier = Modifier.weight(1f)) {
+            Text(
+                text = route.summary,
+                color = SenseInk,
+                fontSize = 14.sp,
+                fontWeight = FontWeight.Bold,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis
+            )
+            Text(
+                text = listOfNotNull(
+                    if (route.isScored) "${route.sensitivity} load" else "Unrated",
+                    route.avgPedestrianCount?.let { "~${it.roundToInt()} people/min" },
+                    route.durationText.takeIf { it.isNotBlank() },
+                    when {
+                        delta == null || delta == 0 -> null
+                        delta > 0 -> "$delta min longer"
+                        else -> "${-delta} min shorter"
+                    }
+                ).joinToString(" - "),
+                color = SenseMuted,
+                fontSize = 12.sp,
+                lineHeight = 16.sp
+            )
+        }
+        Spacer(modifier = Modifier.width(8.dp))
+        Button(
+            onClick = onUse,
+            colors = ButtonDefaults.buttonColors(
+                containerColor = if (isQuieter) SenseBlue else SenseSoftBlue,
+                contentColor = if (isQuieter) Color.White else SenseBlue
+            ),
+            shape = RoundedCornerShape(12.dp)
+        ) {
+            Text("Use", fontSize = 12.sp)
+        }
+    }
+}
+
+/**
+ * The warning page reached with nothing scored yet - from the map or search
+ * screens, before any route has been requested. It explains what the page is for
+ * instead of showing a blank sheet, which is what the old screen did.
+ */
+@Composable
+private fun NoRouteWarningScreen(
+    onBack: () -> Unit,
+    onPlanRoute: () -> Unit
+) {
+    Column(
+        modifier = Modifier
+            .fillMaxSize()
+            .background(Color.White)
+            .verticalScroll(rememberScrollState())
+            .padding(horizontal = 20.dp, vertical = 28.dp)
+    ) {
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            BackButton(onBack)
+            Spacer(modifier = Modifier.width(12.dp))
+            Text(
+                text = "Sensory alerts",
+                color = SenseInk,
+                fontSize = 18.sp,
+                fontWeight = FontWeight.Bold
+            )
+        }
+
+        Spacer(modifier = Modifier.height(20.dp))
+        Text(
+            text = "No route scored yet",
+            color = SenseInk,
+            fontSize = 20.sp,
+            fontWeight = FontWeight.Bold
+        )
+        Spacer(modifier = Modifier.height(8.dp))
+        Text(
+            text = "Sensory alerts are worked out for a specific walk: the pedestrian " +
+                "counts on the streets a route actually uses, measured against the " +
+                "thresholds you set. Pick a destination and this page will show what " +
+                "the rating on each option is based on.",
+            color = SenseMuted,
+            fontSize = 13.sp,
+            lineHeight = 19.sp
+        )
+
+        Spacer(modifier = Modifier.height(24.dp))
+        Button(
+            modifier = Modifier.fillMaxWidth(),
+            onClick = onPlanRoute,
+            colors = ButtonDefaults.buttonColors(containerColor = SenseBlue),
+            shape = RoundedCornerShape(14.dp)
+        ) {
+            Text("Plan a route")
+        }
+    }
+}
+
+@Composable
+private fun WarningSectionTitle(text: String) {
+    Text(
+        text = text,
+        modifier = Modifier.padding(bottom = 6.dp),
+        color = SenseInk,
+        fontSize = 16.sp,
+        fontWeight = FontWeight.Bold
+    )
+}
+
+@Composable
+private fun BulletLine(text: String) {
+    Row(modifier = Modifier.fillMaxWidth().padding(vertical = 5.dp)) {
+        Text("-", color = SenseBlue, fontSize = 13.sp, fontWeight = FontWeight.Bold)
+        Spacer(modifier = Modifier.width(8.dp))
+        Text(text, color = SenseInk, fontSize = 13.sp, lineHeight = 18.sp)
+    }
+}
+
+/**
+ * What a count of this size tends to feel like on a footpath. Phrased as a
+ * tendency rather than a promise: the app measures how many people are about,
+ * not how loud or bright the street is.
+ */
+private fun ScoredRoute.crowdingExplanation(): String = when (sensitivity) {
+    Sensitivity.High ->
+        "Counts this high are typical of a mall or a main street at peak. Expect a " +
+            "steady stream of people, little room to stop and step aside, and the " +
+            "noise that comes with a busy street - traffic, trams and conversation."
+    Sensitivity.Medium ->
+        "A moderate flow: people passing regularly, but with gaps and room to stop " +
+            "or slow down. Busier at crossings and near tram stops than along the " +
+            "stretches between them."
+    Sensitivity.Low ->
+        "Quiet by the sensors' standards - people passing occasionally rather than " +
+            "continuously, and space to stop without being in anyone's way."
+    Sensitivity.Unknown ->
+        "No sensor covers this route closely enough to say how busy it is, so it " +
+            "carries no rating either way."
+}
+
+/** How far off a route a calm place can be and still be worth suggesting. */
+private const val CalmNearRouteMeters = 700.0
+
+/**
+ * Lets the user set the pedestrian counts that divide Low, Medium and High for
+ * them, and how far out landmarks are searched for.
+ *
+ * The bands are edited as two upper bounds rather than three free values: the
+ * High band is whatever is left above the Medium one, so it is shown as a
+ * derived read-out instead of a control that could be dragged into
+ * contradicting the other two.
+ */
+@Composable
+private fun SensoryFilterDialog(
+    initialFilter: SensoryFilter,
+    onDismiss: () -> Unit,
+    onSave: (SensoryFilter) -> Unit
+) {
+    var draft by remember(initialFilter) { mutableStateOf(initialFilter) }
+
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text("Filter") },
+        text = {
+            Column(modifier = Modifier.verticalScroll(rememberScrollState())) {
+                Text(
+                    text = "Sensory overload thresholds",
+                    color = SenseInk,
+                    fontSize = 15.sp,
+                    fontWeight = FontWeight.Bold
+                )
+                Spacer(modifier = Modifier.height(2.dp))
+                Text(
+                    text = "Measured in people per minute on nearby footpath sensors. " +
+                        "Routes are rated against these numbers.",
+                    color = SenseMuted,
+                    fontSize = 12.sp
+                )
+                Spacer(modifier = Modifier.height(12.dp))
+
+                ThresholdSlider(
+                    label = "Low",
+                    valueLabel = "under ${draft.lowMaxPedestrians}",
+                    value = draft.lowMaxPedestrians,
+                    // Stops halfway, leaving the Medium band a span wide enough
+                    // to actually aim at.
+                    range = SensoryFilter.PEDESTRIAN_STEP..SensoryFilter.MAX_LOW_PEDESTRIANS,
+                    tint = SenseRiskLow,
+                    // Pushes Medium up rather than blocking the drag, so the
+                    // slider never silently refuses to move.
+                    onChange = { draft = draft.copy(lowMaxPedestrians = it).normalised() }
+                )
+                Spacer(modifier = Modifier.height(10.dp))
+
+                ThresholdSlider(
+                    label = "Medium",
+                    valueLabel = "${draft.lowMaxPedestrians} to ${draft.mediumMaxPedestrians}",
+                    value = draft.mediumMaxPedestrians,
+                    range = (draft.lowMaxPedestrians + SensoryFilter.PEDESTRIAN_STEP)..
+                        SensoryFilter.MAX_PEDESTRIANS,
+                    tint = SenseRiskMedium,
+                    onChange = { draft = draft.copy(mediumMaxPedestrians = it).normalised() }
+                )
+                Spacer(modifier = Modifier.height(10.dp))
+
+                // Not a control: the top band is defined by where Medium ends.
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Box(
+                        modifier = Modifier
+                            .size(10.dp)
+                            .background(SenseRiskHigh, CircleShape)
+                    )
+                    Spacer(modifier = Modifier.width(8.dp))
+                    Text("High", color = SenseInk, fontSize = 14.sp)
+                    Spacer(modifier = Modifier.weight(1f))
+                    Text(
+                        text = "${draft.mediumMaxPedestrians} and above",
+                        color = SenseMuted,
+                        fontSize = 13.sp
+                    )
+                }
+
+                Spacer(modifier = Modifier.height(18.dp))
+                Text(
+                    text = "Search distance",
+                    color = SenseInk,
+                    fontSize = 15.sp,
+                    fontWeight = FontWeight.Bold
+                )
+                Spacer(modifier = Modifier.height(2.dp))
+                Text(
+                    text = "How far around your location landmarks are looked for.",
+                    color = SenseMuted,
+                    fontSize = 12.sp
+                )
+                Spacer(modifier = Modifier.height(8.dp))
+                ThresholdSlider(
+                    label = "Distance",
+                    valueLabel = "${draft.radiusKm} km",
+                    value = draft.radiusKm,
+                    range = SensoryFilter.MIN_RADIUS_KM..SensoryFilter.MAX_RADIUS_KM,
+                    tint = SenseBlue,
+                    onChange = { draft = draft.copy(radiusKm = it) }
+                )
+            }
+        },
+        confirmButton = { TextButton(onClick = { onSave(draft) }) { Text("Apply") } },
+        dismissButton = {
+            Row {
+                TextButton(onClick = { draft = SensoryFilter() }) { Text("Reset") }
+                TextButton(onClick = onDismiss) { Text("Cancel") }
+            }
+        }
+    )
+}
+
+/** One labelled row: name on the left, current value on the right, slider under. */
+@Composable
+private fun ThresholdSlider(
+    label: String,
+    valueLabel: String,
+    value: Int,
+    range: IntRange,
+    tint: Color,
+    onChange: (Int) -> Unit
+) {
+    Column {
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            Box(modifier = Modifier.size(10.dp).background(tint, CircleShape))
+            Spacer(modifier = Modifier.width(8.dp))
+            Text(label, color = SenseInk, fontSize = 14.sp)
+            Spacer(modifier = Modifier.weight(1f))
+            Text(valueLabel, color = SenseMuted, fontSize = 13.sp)
+        }
+        Slider(
+            value = value.toFloat(),
+            onValueChange = { onChange(it.roundToInt()) },
+            valueRange = range.first.toFloat()..range.last.toFloat(),
+            colors = SliderDefaults.colors(
+                thumbColor = tint,
+                activeTrackColor = tint
+            )
+        )
+    }
+}
+
+@Composable
+private fun EditNameDialog(
+    initialName: String,
+    onDismiss: () -> Unit,
+    onSave: (String) -> Unit
+) {
+    var value by remember { mutableStateOf(initialName) }
+    val focusRequester = remember { FocusRequester() }
+
+    LaunchedEffect(Unit) { runCatching { focusRequester.requestFocus() } }
+
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text("Your name") },
+        text = {
+            OutlinedTextField(
+                value = value,
+                onValueChange = { value = it },
+                modifier = Modifier.fillMaxWidth().focusRequester(focusRequester),
+                singleLine = true,
+                placeholder = { Text("Name shown on the home screen") },
+                keyboardOptions = KeyboardOptions(imeAction = ImeAction.Done),
+                keyboardActions = KeyboardActions(onDone = { onSave(value) })
+            )
+        },
+        confirmButton = { TextButton(onClick = { onSave(value) }) { Text("Save") } },
+        dismissButton = { TextButton(onClick = onDismiss) { Text("Cancel") } }
+    )
+}
+
+/**
+ * Pins the location by name. The typed text is geocoded before it is accepted,
+ * so a place that cannot be found is rejected here rather than silently
+ * anchoring the whole refuge list somewhere wrong.
+ */
+@Composable
+private fun EditLocationDialog(
+    initialQuery: String,
+    isPinned: Boolean,
+    geocoder: PlaceGeocoder,
+    onDismiss: () -> Unit,
+    onUseDeviceLocation: () -> Unit,
+    onSave: (SavedPlace) -> Unit
+) {
+    var query by remember { mutableStateOf(initialQuery) }
+    var error by remember { mutableStateOf<String?>(null) }
+    var checking by remember { mutableStateOf(false) }
+    val scope = rememberCoroutineScope()
+
+    val submit = {
+        val typed = query.trim()
+        if (typed.isEmpty()) {
+            error = "Enter a suburb or address."
+        } else {
+            checking = true
+            error = null
+            scope.launch {
+                val point = runCatching { geocoder.resolve(typed) }.getOrNull()
+                checking = false
+                if (point == null) {
+                    error = "Couldn't find \"$typed\". Try a suburb or a fuller address."
+                } else {
+                    onSave(SavedPlace(typed, point.latitude, point.longitude))
+                }
+            }
+            Unit
+        }
+    }
+
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text("Your location") },
+        text = {
+            Column {
+                Text(
+                    text = "Refuges are found around this location. Leave it on your " +
+                        "device location to follow you as you move.",
+                    color = SenseMuted,
+                    fontSize = 12.sp,
+                    lineHeight = 16.sp
+                )
+                Spacer(modifier = Modifier.height(12.dp))
+                OutlinedTextField(
+                    value = query,
+                    onValueChange = { query = it; error = null },
+                    modifier = Modifier.fillMaxWidth(),
+                    singleLine = true,
+                    enabled = !checking,
+                    placeholder = { Text("Suburb or address") },
+                    isError = error != null,
+                    keyboardOptions = KeyboardOptions(imeAction = ImeAction.Search),
+                    keyboardActions = KeyboardActions(onSearch = { submit() })
+                )
+                error?.let {
+                    Spacer(modifier = Modifier.height(6.dp))
+                    Text(it, color = SensePink, fontSize = 12.sp, lineHeight = 16.sp)
+                }
+                // Always offered, not just when pinned: unpinned it is the retry
+                // for a lookup that came back empty, which is otherwise a dead end.
+                Spacer(modifier = Modifier.height(4.dp))
+                TextButton(onClick = onUseDeviceLocation) {
+                    Text(
+                        text = if (isPinned) {
+                            "Use my device location instead"
+                        } else {
+                            "Find my location again"
+                        },
+                        fontSize = 13.sp
+                    )
+                }
+            }
+        },
+        confirmButton = {
+            TextButton(onClick = { submit() }, enabled = !checking) {
+                Text(if (checking) "Checking..." else "Save")
+            }
+        },
+        dismissButton = { TextButton(onClick = onDismiss) { Text("Cancel") } }
+    )
+}
+
+/** Stands in for a history list that has nothing in it yet. */
+@Composable
+private fun HistoryEmptyHint(text: String) {
+    Text(
+        text = text,
+        modifier = Modifier.padding(vertical = 10.dp),
+        color = SenseMuted,
+        fontSize = 13.sp
+    )
+}
+
+@Composable
+private fun SectionHeader(title: String, action: String?, onAction: (() -> Unit)?) {
+    Row(modifier = Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+        Text(
+            text = title,
+            modifier = Modifier.weight(1f),
+            color = SenseInk,
+            fontSize = 16.sp,
+            fontWeight = FontWeight.Bold
+        )
+        if (action != null) {
+            TextButton(onClick = { onAction?.invoke() }) {
+                Text(action, color = SenseBlue, fontSize = 12.sp)
+            }
+        }
+    }
+}
+
+@Composable
+private fun RefugePhotoCard(refuge: Refuge, onClick: () -> Unit) {
+    val image = rememberRefugeImage(refuge)
+
+    Box(
+        modifier = Modifier
+            .width(150.dp)
+            .height(188.dp)
+            .clip(RoundedCornerShape(14.dp))
+            .clickable(onClick = onClick)
+    ) {
+        RefugeImage(refuge = refuge, image = image, modifier = Modifier.fillMaxSize())
+        Box(
+            modifier = Modifier
+                .fillMaxSize()
+                .background(Brush.verticalGradient(listOf(Color.Transparent, Color(0xCC101826))))
+        )
+        Text(
+            text = if (refuge.isSaved) "Saved" else "Save",
+            modifier = Modifier.align(Alignment.TopEnd).padding(8.dp),
+            color = if (refuge.isSaved) SensePink else Color.White,
+            fontSize = 11.sp,
+            fontWeight = FontWeight.Bold
+        )
+        Column(modifier = Modifier.align(Alignment.BottomStart).padding(12.dp)) {
+            Text(refuge.name, color = Color.White, fontSize = 14.sp, fontWeight = FontWeight.Bold, maxLines = 2)
+            Text(refuge.category, color = Color.White.copy(alpha = 0.85f), fontSize = 11.sp)
+            refuge.rating?.let { rating ->
+                Text("Star $rating", color = Color(0xFFFFD166), fontSize = 12.sp)
+            }
+            refuge.distanceLabel()?.let { distance ->
+                Text(distance, color = Color.White.copy(alpha = 0.85f), fontSize = 11.sp)
+            }
+            // The CC licences these photos carry require the credit to travel
+            // with the image, so it sits on the card rather than in a settings
+            // screen nobody opens.
+            image?.let {
+                Text(
+                    text = it.credit,
+                    color = Color.White.copy(alpha = 0.7f),
+                    fontSize = 9.sp,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis
+                )
+            }
+        }
+    }
+}
+
+@Composable
+private fun RefugeListItem(
+    refuge: Refuge,
+    onClick: () -> Unit,
+    showCredit: Boolean = false
+) {
+    val image = rememberRefugeImage(refuge)
+
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .clickable(onClick = onClick)
+            .padding(vertical = 8.dp),
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        RefugeImage(
+            refuge = refuge,
+            image = image,
+            modifier = Modifier.size(66.dp).clip(RoundedCornerShape(12.dp))
+        )
+        Spacer(modifier = Modifier.width(12.dp))
+        Column(modifier = Modifier.weight(1f)) {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Text(
+                    text = refuge.name,
+                    modifier = Modifier.weight(1f),
+                    color = SenseInk,
+                    fontSize = 15.sp,
+                    fontWeight = FontWeight.Bold,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis
+                )
+                refuge.rating?.let { rating ->
+                    Text("Star $rating", color = SenseInk, fontSize = 12.sp)
+                }
+                refuge.distanceLabel()?.let { distance ->
+                    Text(distance, color = SenseMuted, fontSize = 12.sp)
+                }
+            }
+            Text(refuge.subtitle, color = SenseMuted, fontSize = 12.sp)
+            Text(refuge.sensoryTag, color = SenseBlue, fontSize = 14.sp, fontWeight = FontWeight.Bold)
+            // Only where there is room for it - the list rows are covered by the
+            // blanket Wikimedia credit under the section heading instead.
+            if (showCredit && image != null) {
+                Text(
+                    text = "Photo: ${image.credit}",
+                    color = SenseMuted,
+                    fontSize = 10.sp,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis
+                )
+            }
+        }
+    }
+}
+
+/**
+ * Autocomplete row offered beneath a place field while the user is typing
+ * towards their own location. Tapping it fills the field with
+ * [MY_LOCATION_LABEL], which the routing screen resolves to a real position
+ * rather than sending to the geocoder.
+ */
+@Composable
+private fun MyLocationSuggestion(onClick: () -> Unit) {
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            // Indented to sit under the text field rather than the marker column.
+            .padding(start = MarkerColumnWidth + 6.dp)
+            .clip(RoundedCornerShape(10.dp))
+            .clickable(onClick = onClick)
+            .padding(vertical = 8.dp, horizontal = 8.dp),
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        Box(
+            modifier = Modifier.size(26.dp).clip(CircleShape).background(SenseSoftBlue),
+            contentAlignment = Alignment.Center
+        ) {
+            Text("Pin", color = SenseBlue, fontSize = 9.sp, fontWeight = FontWeight.Bold)
+        }
+        Spacer(modifier = Modifier.width(10.dp))
+        Column(modifier = Modifier.weight(1f)) {
+            Text(
+                text = MY_LOCATION_LABEL,
+                color = SenseInk,
+                fontSize = 14.sp,
+                fontWeight = FontWeight.Bold
+            )
+            Text("Use where you are now", color = SenseMuted, fontSize = 11.sp)
+        }
+    }
+}
+
+/**
+ * What a place field holds when it means "wherever I am". Kept as a sentinel
+ * rather than a blank field so the choice is visible in the box, and resolved
+ * to coordinates at routing time instead of being geocoded as text.
+ */
+private const val MY_LOCATION_LABEL = "My location"
+
+private fun String.isMyLocation(): Boolean = trim().equals(MY_LOCATION_LABEL, ignoreCase = true)
+
+/**
+ * Whether partly-typed text is reaching for the user's own location, so "loc",
+ * "my loc", "current" or "gps" all surface the suggestion.
+ */
+private fun matchesMyLocation(query: String): Boolean {
+    val typed = query.trim().lowercase()
+    if (typed.length < 2) return false
+    if (typed == MY_LOCATION_LABEL.lowercase()) return false
+    return MY_LOCATION_TERMS.any { it.contains(typed) || typed.contains(it) }
+}
+
+private val MY_LOCATION_TERMS = listOf(
+    "my location", "current location", "my current location",
+    "my position", "where i am", "gps", "here", "me"
+)
+
+@Composable
+private fun SearchResultRow(result: SearchResult, onClick: () -> Unit) {
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .clickable(onClick = onClick)
+            .padding(vertical = 12.dp),
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        Box(
+            modifier = Modifier.size(34.dp).clip(CircleShape).background(ScreenBg),
+            contentAlignment = Alignment.Center
+        ) {
+            Text("S", color = SenseMuted, fontSize = 13.sp, fontWeight = FontWeight.Bold)
+        }
+        Spacer(modifier = Modifier.width(12.dp))
+        Column(modifier = Modifier.weight(1f)) {
+            Text(result.title, color = SenseInk, fontSize = 15.sp, fontWeight = FontWeight.Bold)
+            Text(result.subtitle, color = SenseMuted, fontSize = 12.sp)
+        }
+    }
+}
+
+@Composable
+private fun RouteCard(
+    route: ScoredRoute,
+    isRecommended: Boolean,
+    isChosen: Boolean,
+    isSaved: Boolean,
+    onChoose: () -> Unit,
+    onShare: () -> Unit,
+    onToggleSave: () -> Unit
+) {
+    Column(
+        modifier = Modifier
+            .fillMaxWidth()
+            .clip(RoundedCornerShape(14.dp))
+            // The chosen route is tinted as well as labelled, so which one is
+            // drawn solid on the map is answerable without reading the buttons.
+            .background(if (isChosen) SenseSoftBlue else Color.Transparent)
+            .clickable(onClick = onChoose)
+            .padding(if (isChosen) 12.dp else 0.dp)
+    ) {
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            Box(
+                modifier = Modifier
+                    .size(12.dp)
+                    .clip(CircleShape)
+                    .background(route.displayColor())
+            )
+            Spacer(modifier = Modifier.width(8.dp))
+            Text(
+                text = route.summary,
+                modifier = Modifier.weight(1f),
+                color = SenseInk,
+                fontSize = 16.sp,
+                fontWeight = FontWeight.Bold,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis
+            )
+            if (isRecommended) {
+                Text("Recommended", color = SenseGreen, fontSize = 12.sp, fontWeight = FontWeight.Bold)
+            }
+        }
+        Spacer(modifier = Modifier.height(4.dp))
+        Text(
+            text = listOfNotNull(
+                route.durationText.takeIf { it.isNotBlank() },
+                route.distanceText.takeIf { it.isNotBlank() }
+            ).joinToString(" - "),
+            color = SenseMuted,
+            fontSize = 13.sp
+        )
+        Text(
+            text = if (route.isScored) {
+                "${route.sensitivity} sensory load" +
+                    (route.avgPedestrianCount?.let { " - ~${it.roundToInt()} people/min nearby" } ?: "")
+            } else {
+                "No sensor data for this route"
+            },
+            color = if (route.isScored) route.displayColor() else SenseMuted,
+            fontSize = 13.sp,
+            fontWeight = FontWeight.Bold
+        )
+        Spacer(modifier = Modifier.height(12.dp))
+        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            Button(
+                onClick = onChoose,
+                colors = if (isChosen) {
+                    ButtonDefaults.buttonColors(
+                        containerColor = SenseBlue,
+                        contentColor = Color.White
+                    )
+                } else {
+                    ButtonDefaults.buttonColors(
+                        containerColor = Color.White,
+                        contentColor = SenseBlue
+                    )
+                },
+                border = if (isChosen) null else BorderStroke(1.dp, SenseBlue),
+                shape = RoundedCornerShape(12.dp)
+            ) {
+                Text(if (isChosen) "Chosen" else "Choose")
+            }
+            Button(
+                onClick = onShare,
+                colors = ButtonDefaults.buttonColors(
+                    containerColor = SenseSoftBlue,
+                    contentColor = SenseBlue
+                ),
+                shape = RoundedCornerShape(12.dp)
+            ) {
+                Text("Share")
+            }
+            Button(
+                onClick = onToggleSave,
+                colors = ButtonDefaults.buttonColors(
+                    containerColor = if (isSaved) SensePink else SenseSoftBlue,
+                    contentColor = if (isSaved) Color.White else SenseBlue
+                ),
+                shape = RoundedCornerShape(12.dp)
+            ) {
+                Text(if (isSaved) "Saved" else "Save")
+            }
+        }
+    }
+}
+
+
+@Composable
+private fun SearchPill(text: String, modifier: Modifier, onClick: () -> Unit) {
+    Row(
+        modifier = modifier
+            .clip(RoundedCornerShape(18.dp))
+            .background(Color.White)
+            .clickable(onClick = onClick)
+            .padding(horizontal = 14.dp, vertical = 12.dp),
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        Text("Search", color = SenseMuted, fontSize = 12.sp)
+        Spacer(modifier = Modifier.width(10.dp))
+        Text(text, modifier = Modifier.weight(1f), color = SenseInk, fontSize = 14.sp, maxLines = 1)
+        Text("X", color = SenseMuted, fontSize = 12.sp)
+    }
+}
+
+/**
+ * Every round chrome button in the app. The button stays 44.dp whatever
+ * [iconSize] is, so a glyph can be made more legible without growing the tap
+ * target - or shrinking it, which would matter more.
+ */
+@Composable
+private fun RoundIconButton(
+    @DrawableRes iconRes: Int,
+    contentDescription: String,
+    onClick: () -> Unit,
+    modifier: Modifier = Modifier,
+    iconSize: Dp = 22.dp
+) {
+    Box(
+        modifier = modifier
+            .size(44.dp)
+            .clip(CircleShape)
+            .background(Color.White)
+            .clickable(onClick = onClick),
+        contentAlignment = Alignment.Center
+    ) {
+        Icon(
+            painter = painterResource(id = iconRes),
+            contentDescription = contentDescription,
+            modifier = Modifier.size(iconSize),
+            tint = SenseInk
+        )
+    }
+}
+
+/** The one back affordance, so every screen's is the same size and shape. */
+@Composable
+private fun BackButton(onClick: () -> Unit, modifier: Modifier = Modifier) {
+    RoundIconButton(
+        iconRes = R.drawable.ic_chevron_left,
+        contentDescription = "Back",
+        onClick = onClick,
+        modifier = modifier,
+        // Deliberately larger than the rest of the set. It is the control users
+        // reach for most and the old "<" glyph was set at 11.sp, which left a
+        // 44.dp button holding an arrow a few pixels across.
+        iconSize = 28.dp
+    )
+}
+
+@Composable
+private fun InfoLine(label: String, value: String) {
+    Row(
+        modifier = Modifier.fillMaxWidth().padding(vertical = 10.dp),
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        Box(
+            modifier = Modifier.size(34.dp).clip(CircleShape).background(SenseSoftBlue),
+            contentAlignment = Alignment.Center
+        ) {
+            Text("i", color = SenseBlue, fontWeight = FontWeight.Bold)
+        }
+        Spacer(modifier = Modifier.width(12.dp))
+        Column {
+            Text(label, color = SenseMuted, fontSize = 12.sp)
+            Text(value, color = SenseInk, fontSize = 13.sp, fontWeight = FontWeight.Bold)
+        }
+    }
+}

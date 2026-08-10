@@ -64,7 +64,7 @@ val hasReleaseSigning = releaseStoreFile.isNotEmpty() &&
     releaseKeyPassword.isNotEmpty()
 
 android {
-    namespace = "com.example.sensenav"
+    namespace = "com.flip6.sensenav"
     compileSdk {
         version = release(36) {
             minorApiLevel = 1
@@ -72,7 +72,7 @@ android {
     }
 
     defaultConfig {
-        applicationId = "com.example.sensenav"
+        applicationId = "com.flip6.sensenav"
         minSdk = 26
         targetSdk = 36
         versionCode = 1

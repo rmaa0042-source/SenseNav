@@ -80,7 +80,7 @@ that file is missing, which would make the project unbuildable on a fresh clone,
 so it is deliberately conditional.
 
 1. Create a Firebase project at <https://console.firebase.google.com>.
-2. Add an Android app with package name `com.example.sensenav`.
+2. Add an Android app with package name `com.flip6.sensenav`.
 3. Download `google-services.json` into `app/`. It is gitignored — each developer
    or CI runner fetches their own.
 4. Confirm the plugins picked it up:
@@ -126,9 +126,6 @@ To make release crash reports readable, upload the R8 mapping after each build:
 
 ## Known gaps before a public listing
 
-- **`applicationId` is still `com.example.sensenav`.** Play rejects
-  `com.example.*`. This has to change before the first upload, and it can never
-  change afterwards.
 - **The API is plain HTTP.** Route requests, including the user's coordinates,
   travel unencrypted and are readable by anything on the network path. Cleartext
   is scoped to that one host and denied everywhere else, but TLS on the API is the
