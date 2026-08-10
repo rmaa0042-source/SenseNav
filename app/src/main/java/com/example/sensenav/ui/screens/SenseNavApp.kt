@@ -470,9 +470,9 @@ fun SenseNavApp() {
                 initialPlace = savedPlace,
                 geocoder = placeGeocoder,
                 onGetStarted = { name, filter, place ->
-                    displayName = profileStore.saveOnboardingProfile(
-                        name = name.ifBlank { displayName }
-                    )
+                    // Non-blank by the time it gets here: the screen will not
+                    // advance until the name field has something in it.
+                    displayName = profileStore.saveOnboardingProfile(name)
                     // The same store the filter sheet writes to, so whichever one
                     // the user touched last is what routes are scored against.
                     sensoryFilter = filterStore.save(filter)
@@ -851,23 +851,34 @@ private fun OnboardingScreen(
     // the ones routes are actually scored against - and normalised() does all the
     // clamping for both sliders.
     var filter by remember { mutableStateOf(initialFilter.normalised()) }
+    var nameError by remember { mutableStateOf<String?>(null) }
     var locationQuery by remember { mutableStateOf(initialPlace?.label.orEmpty()) }
     var locationError by remember { mutableStateOf<String?>(null) }
     var checkingLocation by remember { mutableStateOf(false) }
     val focusManager = LocalFocusManager.current
+    val nameFocus = remember { FocusRequester() }
     val scope = rememberCoroutineScope()
 
-    // An empty field is not an error: it means "follow the device", which is the
-    // app's default. Anything typed is geocoded before the screen will advance,
-    // so a place that cannot be found is caught here rather than anchoring every
-    // later search somewhere wrong.
+    // The location field, unlike the name, may be left empty: that means "follow
+    // the device", which is the app's default. Anything typed there is geocoded
+    // before the screen will advance, so a place that cannot be found is caught
+    // here rather than anchoring every later search somewhere wrong.
     val finish = {
+        val typedName = name.trim()
         val typed = locationQuery.trim()
         when {
-            typed.isEmpty() -> onGetStarted(name.trim(), filter, null)
+            // Focused rather than only flagged, so the field is scrolled back into
+            // view and ready to type in - the button that was just tapped can be a
+            // long way below it.
+            typedName.isEmpty() -> {
+                nameError = "Enter your name to continue."
+                runCatching { nameFocus.requestFocus() }
+                Unit
+            }
+            typed.isEmpty() -> onGetStarted(typedName, filter, null)
             // Untouched from what was already pinned, so its coordinates still hold
             // and there is nothing to look up again.
-            typed == initialPlace?.label -> onGetStarted(name.trim(), filter, initialPlace)
+            typed == initialPlace?.label -> onGetStarted(typedName, filter, initialPlace)
             else -> {
                 checkingLocation = true
                 locationError = null
@@ -879,7 +890,7 @@ private fun OnboardingScreen(
                             "Couldn't find \"$typed\". Try a suburb or a fuller address."
                     } else {
                         onGetStarted(
-                            name.trim(),
+                            typedName,
                             filter,
                             SavedPlace(typed, point.latitude, point.longitude)
                         )
@@ -939,10 +950,13 @@ private fun OnboardingScreen(
                 Spacer(modifier = Modifier.height(12.dp))
                 OutlinedTextField(
                     value = name,
-                    onValueChange = { name = it },
-                    modifier = Modifier.fillMaxWidth(),
+                    onValueChange = { name = it; nameError = null },
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .focusRequester(nameFocus),
                     placeholder = { Text("e.g. Freddy", color = SenseMuted) },
                     singleLine = true,
+                    isError = nameError != null,
                     shape = RoundedCornerShape(18.dp),
                     colors = OutlinedTextFieldDefaults.colors(
                         focusedBorderColor = OnboardingBorder,
@@ -950,6 +964,10 @@ private fun OnboardingScreen(
                         cursorColor = SenseBlue
                     )
                 )
+                nameError?.let { message ->
+                    Spacer(modifier = Modifier.height(6.dp))
+                    Text(message, color = SensePink, fontSize = 12.sp, lineHeight = 16.sp)
+                }
 
                 Spacer(modifier = Modifier.height(34.dp))
                 Row(verticalAlignment = Alignment.CenterVertically) {
