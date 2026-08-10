@@ -17,6 +17,7 @@ import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
@@ -92,6 +93,7 @@ import com.example.sensenav.data.SavedRouteStore
 import com.example.sensenav.model.SavedPlace
 import com.example.sensenav.model.SavedRoute
 import com.example.sensenav.model.GeoPoint
+import com.example.sensenav.model.NavStep
 import com.example.sensenav.model.Refuge
 import com.example.sensenav.model.RouteResult
 import com.example.sensenav.model.ScoredRoute
@@ -99,6 +101,11 @@ import com.example.sensenav.model.SearchResult
 import com.example.sensenav.model.SearchResultType
 import com.example.sensenav.model.Sensitivity
 import com.example.sensenav.model.SensoryFilter
+import com.example.sensenav.model.buildRouteGuidance
+import com.example.sensenav.model.distanceTo
+import com.example.sensenav.model.formatMeters
+import com.example.sensenav.model.formatMinutes
+import com.example.sensenav.model.parseDurationMinutes
 import com.example.sensenav.model.withThresholds
 import com.example.sensenav.data.WikimediaImageRepository
 import com.example.sensenav.ui.refuge.LocalRefugeImages
@@ -116,6 +123,8 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import retrofit2.HttpException
 import java.io.IOException
+import java.time.LocalTime
+import java.time.format.DateTimeFormatter
 import kotlin.math.roundToInt
 import android.graphics.Color as AndroidColor
 import com.example.sensenav.data.RefugeRepository
@@ -200,8 +209,25 @@ private enum class AppScreen {
     NearbyMap,
     Search,
     Routes,
+    Navigation,
     Warning
 }
+
+/**
+ * The trip the navigation screen is walking the user through.
+ *
+ * Held above the route options screen rather than inside it, so that leaving
+ * navigation for the warning page and coming back does not lose which route was
+ * being followed. [alternatives] travel with it because the warning page's whole
+ * job is to compare the route in progress against the ones not taken.
+ */
+private data class NavigationPlan(
+    val route: ScoredRoute,
+    val alternatives: List<ScoredRoute>,
+    val origin: GeoPoint,
+    val destination: GeoPoint,
+    val destinationName: String
+)
 
 @Composable
 fun SenseNavApp() {
@@ -220,6 +246,15 @@ fun SenseNavApp() {
     }
     val goBack = remember {
         { if (backStack.size > 1) backStack.removeAt(backStack.lastIndex) }
+    }
+    // Ending a trip is not "one step back" - the user is done with the whole
+    // stack that led into it, so it collapses rather than unwinds.
+    val goHome = remember {
+        {
+            backStack.clear()
+            backStack.add(AppScreen.Home)
+            Unit
+        }
     }
     val warningRepository = remember { WarningRepository() }
     val refugeRepository = remember { RefugeRepository() }
@@ -369,6 +404,14 @@ fun SenseNavApp() {
     }
     // Kept so the warning screen can draw the same routes without refetching.
     var loadedRoutes by remember { mutableStateOf<List<ScoredRoute>>(emptyList()) }
+    // The trip in progress, set when the user starts one and kept until they
+    // start another, so the warning page and the navigation page agree on which
+    // route is being talked about.
+    var navigationPlan by remember { mutableStateOf<NavigationPlan?>(null) }
+    // Which route the warning page should open on. Null when the page was
+    // reached from somewhere with no route in hand, in which case it falls back
+    // to the busiest of whatever was last scored.
+    var warningFocus by remember { mutableStateOf<ScoredRoute?>(null) }
     // Endpoints typed on the search screen. A blank start means "my current
     // location"; a blank end falls back to the selected refuge's own name.
     var startPoint by remember { mutableStateOf("") }
@@ -423,7 +466,10 @@ fun SenseNavApp() {
                     openRefuge(refuge)
                     navigateTo(AppScreen.Routes)
                 },
-                onWarning = { navigateTo(AppScreen.Warning) }
+                onWarning = {
+                    warningFocus = null
+                    navigateTo(AppScreen.Warning)
+                }
             )
             AppScreen.Search -> SearchScreen(
                 repository = repository,
@@ -449,7 +495,10 @@ fun SenseNavApp() {
                     openRefuge(refuge)
                     navigateTo(AppScreen.NearbyMap)
                 },
-                onWarning = { navigateTo(AppScreen.Warning) }
+                onWarning = {
+                    warningFocus = null
+                    navigateTo(AppScreen.Warning)
+                }
             )
             AppScreen.Routes -> RouteOptionsScreen(
                 destination = destination,
@@ -462,15 +511,59 @@ fun SenseNavApp() {
                 sensoryFilter = sensoryFilter,
                 onBack = goBack,
                 onFilter = { editingFilter = true },
-                onWarning = { navigateTo(AppScreen.Warning) },
-                onNavigate = { navigateTo(AppScreen.NearbyMap) },
+                onWarning = { route ->
+                    warningFocus = route
+                    navigateTo(AppScreen.Warning)
+                },
+                onStart = { plan ->
+                    navigationPlan = plan
+                    navigateTo(AppScreen.Navigation)
+                },
                 onRoutesLoaded = { loadedRoutes = it }
             )
+            AppScreen.Navigation -> {
+                val plan = navigationPlan
+                if (plan == null) {
+                    // Only reachable if the trip was dropped while the screen was
+                    // on show; there is nothing to navigate, so step back rather
+                    // than sit on an empty page.
+                    LaunchedEffect(Unit) { goBack() }
+                } else {
+                    NavigationScreen(
+                        plan = plan,
+                        onBack = goBack,
+                        onFinish = goHome,
+                        onWarning = {
+                            warningFocus = plan.route
+                            navigateTo(AppScreen.Warning)
+                        }
+                    )
+                }
+            }
             AppScreen.Warning -> WarningScreen(
                 warnings = warnings,
-                routes = loadedRoutes,
+                routes = loadedRoutes.ifEmpty {
+                    navigationPlan?.let { listOf(it.route) + it.alternatives }.orEmpty()
+                },
+                focusRoute = warningFocus,
+                filter = sensoryFilter,
+                refuges = refuges,
+                destinationName = navigationPlan?.destinationName ?: destination.name,
                 onBack = goBack,
-                onReroute = { navigateTo(AppScreen.Routes) }
+                onReroute = { navigateTo(AppScreen.Routes) },
+                onUseRoute = { route ->
+                    val plan = navigationPlan
+                    if (plan == null) {
+                        navigateTo(AppScreen.Routes)
+                    } else {
+                        navigationPlan = plan.copy(
+                            route = route,
+                            alternatives = (listOf(plan.route) + plan.alternatives)
+                                .filterNot { it == route }
+                        )
+                        navigateTo(AppScreen.Navigation)
+                    }
+                }
             )
         }
 
@@ -1073,8 +1166,8 @@ private fun RouteOptionsScreen(
     sensoryFilter: SensoryFilter,
     onBack: () -> Unit,
     onFilter: () -> Unit,
-    onWarning: () -> Unit,
-    onNavigate: () -> Unit,
+    onWarning: (ScoredRoute?) -> Unit,
+    onStart: (NavigationPlan) -> Unit,
     onRoutesLoaded: (List<ScoredRoute>) -> Unit
 ) {
     val context = LocalContext.current
@@ -1264,7 +1357,9 @@ private fun RouteOptionsScreen(
                 TextButton(
                     onClick = {
                         showHighRiskAlert = false
-                        onWarning()
+                        // Opens the warning on the route it is actually about,
+                        // rather than on whatever the page picks by default.
+                        onWarning(ranked.firstOrNull { it.sensitivity == Sensitivity.High })
                     }
                 ) {
                     Text("View Warning")
@@ -1433,16 +1528,24 @@ private fun RouteOptionsScreen(
 
                                 // Choosing has to lead somewhere: this is where the
                                 // old Directions button's job went, applied to
-                                // whichever route the user settled on.
+                                // whichever route the user settled on. A busy
+                                // route still starts - the alert above has already
+                                // said so, and refusing to walk it would be the
+                                // app overriding a choice the user has made.
                                 ranked.getOrNull(chosenRouteIndex)?.let { chosen ->
                                     Button(
                                         modifier = Modifier.fillMaxWidth(),
                                         onClick = {
-                                            if (chosen.sensitivity == Sensitivity.High) {
-                                                onWarning()
-                                            } else {
-                                                onNavigate()
-                                            }
+                                            onStart(
+                                                NavigationPlan(
+                                                    route = chosen,
+                                                    alternatives = ranked.filterNot { it === chosen },
+                                                    origin = current.origin,
+                                                    destination = current.destination,
+                                                    destinationName = submittedDestination
+                                                        .ifBlank { destination.name }
+                                                )
+                                            )
                                         },
                                         colors = ButtonDefaults.buttonColors(
                                             containerColor = SenseBlue
@@ -1707,33 +1810,172 @@ private fun RoutesError(message: String, onRetry: () -> Unit) {
     }
 }
 
+/**
+ * Walks the user along the route they chose.
+ *
+ * The scoring API returns geometry and a total duration, not a manoeuvre list,
+ * so the steps here are read off the polyline itself by [buildRouteGuidance] and
+ * the time remaining is the quoted duration scaled by how much path is left.
+ * Both are honest approximations and the screen says so rather than dressing
+ * them up as a provider's turn-by-turn feed.
+ *
+ * Position is polled rather than streamed. Without permission - or before the
+ * first fix - the screen still works: it shows the whole route and the full step
+ * list instead of pretending to know where the user is.
+ */
 @Composable
-private fun WarningScreen(
-    warnings: List<WarningInfo>,
-    routes: List<ScoredRoute>,
+private fun NavigationScreen(
+    plan: NavigationPlan,
     onBack: () -> Unit,
-    onReroute: () -> Unit
+    onFinish: () -> Unit,
+    onWarning: () -> Unit
 ) {
-    val warning = warnings.firstOrNull() ?: return
-    // The busiest of the routes just scored is the one being warned about.
-    val flaggedRoute = routes.maxByOrNull { it.avgPedestrianCount ?: 0.0 }
-    val mapCentre = flaggedRoute?.path?.let { it[it.size / 2] }
+    val context = LocalContext.current
+    val locationProvider = remember(context) { LocationProvider(context) }
+    val route = plan.route
+
+    val guidance = remember(route.path, plan.destinationName) {
+        buildRouteGuidance(route.path, plan.destinationName)
+    }
+    val totalMinutes = remember(route.durationText, guidance.totalMeters) {
+        parseDurationMinutes(route.durationText)
+            ?: (guidance.totalMeters / WalkingMetersPerMinute).roundToInt().coerceAtLeast(1)
+    }
+
+    var position by remember { mutableStateOf<GeoPoint?>(null) }
+    // High load is announced once, on arrival at this screen. Repeating it every
+    // time the reading crosses the line would be nagging someone who has already
+    // decided, on a screen they are walking with.
+    var showLoadAlert by remember(route) {
+        mutableStateOf(route.sensitivity == Sensitivity.High)
+    }
+
+    // Asked afresh each tick, so permission granted after this screen opened
+    // starts working without leaving and coming back.
+    LaunchedEffect(Unit) {
+        while (true) {
+            locationProvider.currentLocation()?.let { position = it }
+            delay(PositionPollMillis)
+        }
+    }
+
+    val progress = remember(position, guidance) { position?.let { guidance.progressAt(it) } }
+    val traveled = progress?.traveledMeters ?: 0.0
+    val remainingMeters = progress?.remainingMeters ?: guidance.totalMeters
+    val remainingMinutes = if (guidance.totalMeters > 0.0) {
+        (totalMinutes * remainingMeters / guidance.totalMeters).roundToInt()
+    } else {
+        totalMinutes
+    }
+    val arrivalLabel = remember(remainingMinutes) {
+        runCatching {
+            LocalTime.now()
+                .plusMinutes(remainingMinutes.toLong())
+                .format(DateTimeFormatter.ofPattern("h:mm a"))
+        }.getOrNull()
+    }
+    val upcoming = guidance.stepsAfter(traveled)
+    val nextStep = upcoming.firstOrNull()
+    val arrived = progress?.hasArrived == true
+
+    val cameraPositionState = rememberSenseNavCameraState(
+        target = plan.origin.toLatLng(),
+        zoom = 16.5f
+    )
+
+    // Follows the user once there is a fix to follow; until then it frames the
+    // whole trip, which is the more useful view when the dot is missing.
+    LaunchedEffect(position, guidance) {
+        val here = position
+        if (here != null) {
+            runCatching {
+                cameraPositionState.animate(
+                    CameraUpdateFactory.newLatLngZoom(here.toLatLng(), 17f)
+                )
+            }
+        } else if (route.path.size >= 2) {
+            val bounds = LatLngBounds.builder()
+                .apply { route.path.forEach { include(it.toLatLng()) } }
+                .build()
+            runCatching {
+                cameraPositionState.animate(CameraUpdateFactory.newLatLngBounds(bounds, 110))
+            }.onFailure {
+                cameraPositionState.animate(
+                    CameraUpdateFactory.newLatLngZoom(bounds.center, 14f)
+                )
+            }
+        }
+    }
+
+    if (showLoadAlert) {
+        AlertDialog(
+            onDismissRequest = { showLoadAlert = false },
+            title = { Text("High sensory load on this route") },
+            text = {
+                Text(
+                    text = buildString {
+                        append("The route you are starting is rated ")
+                        append("${route.sensitivity} sensory load")
+                        route.avgPedestrianCount?.let {
+                            append(" - about ${it.roundToInt()} people per minute on the ")
+                            append("footpath sensors nearest it")
+                        }
+                        append(". You can still walk it; the details page explains what ")
+                        append("the reading means and what the quieter options cost you.")
+                    }
+                )
+            },
+            confirmButton = {
+                TextButton(
+                    onClick = {
+                        showLoadAlert = false
+                        onWarning()
+                    }
+                ) {
+                    Text("View details")
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = { showLoadAlert = false }) { Text("Continue") }
+            }
+        )
+    }
 
     Column(modifier = Modifier.fillMaxSize().background(Color.White)) {
         Box(modifier = Modifier.fillMaxWidth().weight(1f)) {
             SenseNavMap(
                 modifier = Modifier.fillMaxSize(),
-                routes = listOfNotNull(flaggedRoute?.toMapRoute()),
-                cameraPositionState = rememberSenseNavCameraState(
-                    target = mapCentre?.toLatLng() ?: LatLng(-37.8183, 144.9671),
-                    zoom = 14.5f
-                ),
-                contentPadding = PaddingValues(top = 90.dp)
+                routes = listOf(route.toMapRoute()),
+                origin = plan.origin.toLatLng(),
+                destination = plan.destination.toLatLng(),
+                originColor = SenseBlue,
+                destinationColor = SensePink,
+                cameraPositionState = cameraPositionState,
+                enableMyLocation = true,
+                contentPadding = PaddingValues(top = 190.dp)
             )
+
             SmallRoundButton(
                 text = "<",
                 onClick = onBack,
-                modifier = Modifier.padding(start = 18.dp, top = 34.dp)
+                modifier = Modifier
+                    .align(Alignment.TopStart)
+                    .padding(start = 16.dp, top = 34.dp)
+            )
+
+            NavigationInstructionCard(
+                step = nextStep,
+                followingStep = upcoming.getOrNull(1),
+                distanceToStep = nextStep
+                    ?.let { it.distanceFromStartMeters - traveled }
+                    ?.coerceAtLeast(0.0),
+                hasFix = position != null,
+                arrived = arrived,
+                destinationName = plan.destinationName,
+                modifier = Modifier
+                    .align(Alignment.TopCenter)
+                    .padding(horizontal = 16.dp)
+                    .padding(top = 88.dp)
             )
         }
 
@@ -1741,43 +1983,826 @@ private fun WarningScreen(
             modifier = Modifier.fillMaxWidth(),
             color = Color.White,
             shadowElevation = 10.dp,
-            shape = RoundedCornerShape(topStart = 28.dp, topEnd = 28.dp)
+            shape = RoundedCornerShape(topStart = 24.dp, topEnd = 24.dp)
         ) {
-            Column(modifier = Modifier.padding(24.dp)) {
+            Column(modifier = Modifier.padding(20.dp)) {
+                Row(verticalAlignment = Alignment.Bottom) {
+                    Text(
+                        text = if (arrived) "Arrived" else formatMinutes(remainingMinutes),
+                        color = SenseInk,
+                        fontSize = 24.sp,
+                        fontWeight = FontWeight.Bold
+                    )
+                    Spacer(modifier = Modifier.width(10.dp))
+                    Text(
+                        text = if (arrived) {
+                            "at ${plan.destinationName}"
+                        } else {
+                            listOfNotNull(
+                                formatMeters(remainingMeters),
+                                arrivalLabel?.let { "arrive around $it" }
+                            ).joinToString(" - ")
+                        },
+                        modifier = Modifier.weight(1f),
+                        color = SenseMuted,
+                        fontSize = 13.sp
+                    )
+                }
+
+                Spacer(modifier = Modifier.height(12.dp))
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Box(
+                        modifier = Modifier
+                            .size(12.dp)
+                            .clip(CircleShape)
+                            .background(if (route.isScored) route.displayColor() else SenseMuted)
+                    )
+                    Spacer(modifier = Modifier.width(8.dp))
+                    Text(
+                        text = if (route.isScored) {
+                            "${route.sensitivity} sensory load" +
+                                (route.avgPedestrianCount
+                                    ?.let { " - ~${it.roundToInt()} people/min nearby" }
+                                    ?: "")
+                        } else {
+                            "No sensor data for this route"
+                        },
+                        modifier = Modifier.weight(1f),
+                        color = if (route.isScored) route.displayColor() else SenseMuted,
+                        fontSize = 13.sp,
+                        fontWeight = FontWeight.Bold
+                    )
+                    TextButton(onClick = onWarning) {
+                        Text("Details", color = SenseBlue, fontSize = 12.sp)
+                    }
+                }
+
+                // Said plainly rather than silently re-planning: this app does not
+                // reroute someone without being asked.
+                if (progress?.isOffRoute == true) {
+                    Text(
+                        text = "You are about ${formatMeters(progress.offRouteMeters)} from " +
+                            "this route. Head back to the line, or pick another route.",
+                        color = SensePink,
+                        fontSize = 12.sp,
+                        lineHeight = 16.sp
+                    )
+                    Spacer(modifier = Modifier.height(8.dp))
+                }
+
+                if (!arrived && upcoming.size > 1) {
+                    Spacer(modifier = Modifier.height(6.dp))
+                    Text(
+                        text = "Steps ahead",
+                        color = SenseInk,
+                        fontSize = 14.sp,
+                        fontWeight = FontWeight.Bold
+                    )
+                    Column(
+                        modifier = Modifier
+                            .heightIn(max = 132.dp)
+                            .verticalScroll(rememberScrollState())
+                    ) {
+                        upcoming.drop(1).forEach { step ->
+                            NavStepRow(step)
+                        }
+                    }
+                }
+
+                Spacer(modifier = Modifier.height(12.dp))
+                Button(
+                    modifier = Modifier.fillMaxWidth(),
+                    onClick = onFinish,
+                    colors = ButtonDefaults.buttonColors(
+                        containerColor = if (arrived) SenseBlue else SenseSoftBlue,
+                        contentColor = if (arrived) Color.White else SenseBlue
+                    ),
+                    shape = RoundedCornerShape(14.dp)
+                ) {
+                    Text(if (arrived) "Done" else "End navigation")
+                }
+            }
+        }
+    }
+}
+
+/** The manoeuvre being walked towards, over the top of the map. */
+@Composable
+private fun NavigationInstructionCard(
+    step: NavStep?,
+    followingStep: NavStep?,
+    distanceToStep: Double?,
+    hasFix: Boolean,
+    arrived: Boolean,
+    destinationName: String,
+    modifier: Modifier = Modifier
+) {
+    Card(
+        modifier = modifier.fillMaxWidth(),
+        shape = RoundedCornerShape(18.dp),
+        colors = CardDefaults.cardColors(containerColor = Color.White),
+        elevation = CardDefaults.cardElevation(defaultElevation = 6.dp)
+    ) {
+        Column(modifier = Modifier.padding(16.dp)) {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Box(
+                    modifier = Modifier
+                        .size(44.dp)
+                        .clip(RoundedCornerShape(12.dp))
+                        .background(SenseSoftBlue),
+                    contentAlignment = Alignment.Center
+                ) {
+                    Text(
+                        text = if (arrived) "End" else step?.maneuver?.badge ?: "Go",
+                        color = SenseBlue,
+                        fontSize = 11.sp,
+                        fontWeight = FontWeight.Bold
+                    )
+                }
+                Spacer(modifier = Modifier.width(12.dp))
+                Column(modifier = Modifier.weight(1f)) {
+                    Text(
+                        text = when {
+                            arrived -> "You have arrived at $destinationName"
+                            step != null -> step.instruction
+                            else -> "Follow the route to $destinationName"
+                        },
+                        color = SenseInk,
+                        fontSize = 18.sp,
+                        lineHeight = 22.sp,
+                        fontWeight = FontWeight.Bold
+                    )
+                    if (!arrived) {
+                        Text(
+                            text = when {
+                                // No fix means no honest "in 200 m" - the steps
+                                // below are the guidance until one arrives.
+                                !hasFix -> "Waiting for your location - the full step list is below"
+                                distanceToStep != null -> "in ${formatMeters(distanceToStep)}"
+                                else -> "Keep going"
+                            },
+                            color = SenseMuted,
+                            fontSize = 13.sp
+                        )
+                    }
+                }
+            }
+            if (!arrived && followingStep != null) {
+                Spacer(modifier = Modifier.height(8.dp))
                 Text(
-                    text = "! ${warning.title}",
-                    color = SenseInk,
-                    fontSize = 20.sp,
-                    fontWeight = FontWeight.Bold
-                )
-                Spacer(modifier = Modifier.height(20.dp))
-                Text(
-                    text = "${warning.locationName} (High Congestion)",
-                    color = SenseInk,
-                    fontSize = 16.sp,
-                    fontWeight = FontWeight.Bold
-                )
-                Text(
-                    text = "Crowd density at ${warning.densityPercent}% - ${warning.riskSummary}",
+                    text = "then ${followingStep.instruction.lowercase()} " +
+                        "after ${formatMeters(followingStep.legMeters)}",
                     color = SenseMuted,
                     fontSize = 12.sp
                 )
+            }
+        }
+    }
+}
+
+/** One upcoming manoeuvre in the list under the map. */
+@Composable
+private fun NavStepRow(step: NavStep) {
+    Row(
+        modifier = Modifier.fillMaxWidth().padding(vertical = 8.dp),
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        Box(
+            modifier = Modifier.size(30.dp).clip(CircleShape).background(ScreenBg),
+            contentAlignment = Alignment.Center
+        ) {
+            Text(step.maneuver.badge, color = SenseMuted, fontSize = 8.sp, fontWeight = FontWeight.Bold)
+        }
+        Spacer(modifier = Modifier.width(12.dp))
+        Text(
+            text = step.instruction,
+            modifier = Modifier.weight(1f),
+            color = SenseInk,
+            fontSize = 13.sp,
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis
+        )
+        Text(
+            text = "after ${formatMeters(step.legMeters)}",
+            color = SenseMuted,
+            fontSize = 12.sp
+        )
+    }
+}
+
+/** How often the device position is re-read while navigating. */
+private const val PositionPollMillis = 4_000L
+
+/**
+ * Average walking pace, used only when a route's duration text cannot be parsed.
+ * Roughly 4.8 km/h, which is what Google Directions assumes for walking.
+ */
+private const val WalkingMetersPerMinute = 80.0
+
+/**
+ * What a sensory warning actually rests on, for the route it was raised about.
+ *
+ * Everything on this page is derived from the routes just scored and the bands
+ * the user set for themselves: the reading, where it sits against their own High
+ * cut-off, what the alternatives cost in time, and which calm places sit close
+ * enough to the line to duck into. Advisories from the warnings service are
+ * shown too, but as their own section - they describe a place, not this trip,
+ * and presenting one as a verdict on the user's route was the old page's
+ * central problem.
+ */
+@Composable
+private fun WarningScreen(
+    warnings: List<WarningInfo>,
+    routes: List<ScoredRoute>,
+    focusRoute: ScoredRoute?,
+    filter: SensoryFilter,
+    refuges: List<Refuge>,
+    destinationName: String,
+    onBack: () -> Unit,
+    onReroute: () -> Unit,
+    onUseRoute: (ScoredRoute) -> Unit
+) {
+    // The route the user came here about; failing that, the busiest of the last
+    // set scored, which is the one a bare "Alert" tap is asking about.
+    val flagged = focusRoute ?: routes.maxByOrNull { it.avgPedestrianCount ?: 0.0 }
+
+    if (flagged == null) {
+        NoRouteWarningScreen(warnings = warnings, onBack = onBack, onPlanRoute = onReroute)
+        return
+    }
+
+    val alternatives = remember(routes, flagged) {
+        routes.filterNot { it == flagged }.rankedBySensory()
+    }
+    val flaggedMinutes = remember(flagged) { parseDurationMinutes(flagged.durationText) }
+
+    // Calm places close enough to the route to be worth knowing about mid-walk.
+    // Measured to the nearest point on the path rather than to the destination,
+    // because the question this answers is "where can I stop on the way".
+    val calmNearRoute = remember(flagged, refuges) {
+        val sampled = flagged.path.filterIndexed { index, _ -> index % 5 == 0 }
+            .ifEmpty { flagged.path }
+        refuges.asSequence()
+            .map { refuge ->
+                refuge to sampled.minOf { it.distanceTo(refuge.toGeoPoint()) }
+            }
+            .filter { it.second <= CalmNearRouteMeters }
+            .sortedBy { it.second }
+            .take(3)
+            .toList()
+    }
+
+    val cameraPositionState = rememberSenseNavCameraState(
+        target = flagged.path[flagged.path.size / 2].toLatLng(),
+        zoom = 14.5f
+    )
+
+    LaunchedEffect(flagged) {
+        if (flagged.path.size < 2) return@LaunchedEffect
+        val bounds = LatLngBounds.builder()
+            .apply { flagged.path.forEach { include(it.toLatLng()) } }
+            .build()
+        runCatching {
+            cameraPositionState.animate(CameraUpdateFactory.newLatLngBounds(bounds, 110))
+        }
+    }
+
+    Column(modifier = Modifier.fillMaxSize().background(Color.White)) {
+        // Fixed height rather than a weight: the panel below scrolls, and a map
+        // inside a scrolling column swallows the drag that should move the page.
+        Box(modifier = Modifier.fillMaxWidth().height(220.dp)) {
+            SenseNavMap(
+                modifier = Modifier.fillMaxSize(),
+                routes = listOf(flagged.toMapRoute()) +
+                    alternatives.map { it.toMapRoute(isDimmed = true) },
+                cameraPositionState = cameraPositionState,
+                contentPadding = PaddingValues(top = 70.dp)
+            )
+            SmallRoundButton(
+                text = "<",
+                onClick = onBack,
+                modifier = Modifier.padding(start = 18.dp, top = 24.dp)
+            )
+        }
+
+        Surface(
+            modifier = Modifier.fillMaxWidth().weight(1f),
+            color = Color.White,
+            shadowElevation = 10.dp,
+            shape = RoundedCornerShape(topStart = 28.dp, topEnd = 28.dp)
+        ) {
+            Column(
+                modifier = Modifier
+                    .verticalScroll(rememberScrollState())
+                    .padding(horizontal = 24.dp, vertical = 22.dp)
+            ) {
+                Text(
+                    text = if (flagged.isScored) {
+                        "${flagged.sensitivity} sensory load"
+                    } else {
+                        "No sensory rating for this route"
+                    },
+                    color = if (flagged.isScored) flagged.displayColor() else SenseInk,
+                    fontSize = 22.sp,
+                    fontWeight = FontWeight.Bold
+                )
+                Text(
+                    text = listOfNotNull(
+                        "${flagged.summary} to $destinationName",
+                        flagged.durationText.takeIf { it.isNotBlank() },
+                        flagged.distanceText.takeIf { it.isNotBlank() }
+                    ).joinToString(" - "),
+                    color = SenseMuted,
+                    fontSize = 13.sp,
+                    lineHeight = 18.sp
+                )
+
+                Spacer(modifier = Modifier.height(18.dp))
+                SensoryReadingPanel(route = flagged, filter = filter)
+
+                Spacer(modifier = Modifier.height(20.dp))
+                WarningSectionTitle("What this means on the ground")
+                Text(
+                    text = flagged.crowdingExplanation(),
+                    color = SenseInk,
+                    fontSize = 13.sp,
+                    lineHeight = 19.sp
+                )
+                Spacer(modifier = Modifier.height(8.dp))
+                Text(
+                    text = "The reading is an average over the footpath sensors nearest " +
+                        "this route, so individual corners can be busier or quieter than " +
+                        "the number suggests, and it moves through the day.",
+                    color = SenseMuted,
+                    fontSize = 12.sp,
+                    lineHeight = 17.sp
+                )
+
+                if (alternatives.isNotEmpty()) {
+                    Spacer(modifier = Modifier.height(22.dp))
+                    WarningSectionTitle("Your other options")
+                    Text(
+                        text = "Same start and finish, scored at the same time.",
+                        color = SenseMuted,
+                        fontSize = 12.sp
+                    )
+                    Spacer(modifier = Modifier.height(6.dp))
+                    alternatives.forEach { option ->
+                        AlternativeRouteRow(
+                            route = option,
+                            comparedWith = flagged,
+                            comparedMinutes = flaggedMinutes,
+                            onUse = { onUseRoute(option) }
+                        )
+                    }
+                }
+
+                if (calmNearRoute.isNotEmpty()) {
+                    Spacer(modifier = Modifier.height(22.dp))
+                    WarningSectionTitle("Calm places along the way")
+                    Text(
+                        text = "Somewhere to stop if it gets too much. Distances are to " +
+                            "the nearest point on this route, not to your destination.",
+                        color = SenseMuted,
+                        fontSize = 12.sp,
+                        lineHeight = 17.sp
+                    )
+                    Spacer(modifier = Modifier.height(6.dp))
+                    calmNearRoute.forEach { (refuge, meters) ->
+                        Row(
+                            modifier = Modifier.fillMaxWidth().padding(vertical = 8.dp),
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Box(
+                                modifier = Modifier
+                                    .size(30.dp)
+                                    .clip(CircleShape)
+                                    .background(SenseSoftBlue),
+                                contentAlignment = Alignment.Center
+                            ) {
+                                Text(
+                                    text = "Pin",
+                                    color = SenseBlue,
+                                    fontSize = 8.sp,
+                                    fontWeight = FontWeight.Bold
+                                )
+                            }
+                            Spacer(modifier = Modifier.width(12.dp))
+                            Column(modifier = Modifier.weight(1f)) {
+                                Text(
+                                    text = refuge.name,
+                                    color = SenseInk,
+                                    fontSize = 14.sp,
+                                    fontWeight = FontWeight.Bold,
+                                    maxLines = 1,
+                                    overflow = TextOverflow.Ellipsis
+                                )
+                                Text(
+                                    text = refuge.category,
+                                    color = SenseMuted,
+                                    fontSize = 11.sp,
+                                    maxLines = 1,
+                                    overflow = TextOverflow.Ellipsis
+                                )
+                            }
+                            Text(
+                                text = "${formatMeters(meters)} off route",
+                                color = SenseMuted,
+                                fontSize = 12.sp
+                            )
+                        }
+                    }
+                }
+
                 Spacer(modifier = Modifier.height(22.dp))
-                InfoLine("Data Source", warning.dataSource)
-                InfoLine("Suggested Action", warning.suggestedAction)
-                Spacer(modifier = Modifier.height(12.dp))
+                WarningSectionTitle("Ways to make it easier")
+                BulletLine("Take ear defenders or noise-cancelling headphones, and put them on before the busy stretch rather than during it.")
+                BulletLine("Plan a pause. A stop at one of the calm places above breaks a hard walk into two manageable ones.")
+                BulletLine("Move the trip if you can - counts on these sensors peak around the commute and lunch hours.")
+                if (alternatives.isNotEmpty()) {
+                    BulletLine("A quieter route is usually only a few minutes longer; the comparison above shows exactly how many.")
+                }
+
+                Spacer(modifier = Modifier.height(22.dp))
+                WarningSectionTitle("Where these numbers come from")
+                InfoLine(
+                    "Data source",
+                    "City of Melbourne pedestrian sensors, via the SenseNav routing service"
+                )
+                InfoLine(
+                    "Your bands",
+                    "Low under ${filter.lowMaxPedestrians}, Medium under " +
+                        "${filter.mediumMaxPedestrians}, High from " +
+                        "${filter.mediumMaxPedestrians} people/min"
+                )
+                Text(
+                    text = "Bands are yours, not the service's - change them under Filter and " +
+                        "every route is rated again against the new numbers.",
+                    color = SenseMuted,
+                    fontSize = 12.sp,
+                    lineHeight = 17.sp
+                )
+
+                // Advisories from the warnings service. Kept separate because
+                // they are about a location, not about the route on this page.
+                if (warnings.isNotEmpty()) {
+                    Spacer(modifier = Modifier.height(22.dp))
+                    WarningSectionTitle("Current area advisories")
+                    warnings.forEach { warning ->
+                        Spacer(modifier = Modifier.height(8.dp))
+                        Text(
+                            text = "${warning.title} - ${warning.locationName}",
+                            color = SenseInk,
+                            fontSize = 14.sp,
+                            fontWeight = FontWeight.Bold
+                        )
+                        Text(
+                            text = "Crowd density ${warning.densityPercent}% - " +
+                                warning.riskSummary,
+                            color = SenseMuted,
+                            fontSize = 12.sp,
+                            lineHeight = 17.sp
+                        )
+                        Text(
+                            text = "${warning.suggestedAction} (${warning.dataSource})",
+                            color = SenseMuted,
+                            fontSize = 12.sp,
+                            lineHeight = 17.sp
+                        )
+                    }
+                }
+
+                Spacer(modifier = Modifier.height(22.dp))
                 Button(
                     modifier = Modifier.fillMaxWidth(),
                     onClick = onReroute,
                     colors = ButtonDefaults.buttonColors(containerColor = SenseBlue),
                     shape = RoundedCornerShape(14.dp)
                 ) {
-                    Text("Reroute")
+                    Text("Back to route options")
                 }
+                Spacer(modifier = Modifier.height(8.dp))
             }
         }
     }
 }
+
+/** The reading itself, against the user's own High cut-off. */
+@Composable
+private fun SensoryReadingPanel(route: ScoredRoute, filter: SensoryFilter) {
+    Column(
+        modifier = Modifier
+            .fillMaxWidth()
+            .clip(RoundedCornerShape(16.dp))
+            .background(ScreenBg)
+            .padding(16.dp)
+    ) {
+        val count = route.avgPedestrianCount
+        Row(verticalAlignment = Alignment.Bottom) {
+            Text(
+                text = count?.let { "~${it.roundToInt()}" } ?: "No reading",
+                color = SenseInk,
+                fontSize = 30.sp,
+                fontWeight = FontWeight.Bold
+            )
+            Spacer(modifier = Modifier.width(8.dp))
+            Text(
+                text = if (count != null) "people per minute, averaged along the route" else "",
+                modifier = Modifier.weight(1f),
+                color = SenseMuted,
+                fontSize = 12.sp,
+                lineHeight = 16.sp
+            )
+        }
+
+        if (count != null) {
+            Spacer(modifier = Modifier.height(12.dp))
+            BandBar(count = count, filter = filter)
+            Spacer(modifier = Modifier.height(10.dp))
+            Text(
+                text = when (route.sensitivity) {
+                    Sensitivity.High ->
+                        "That is above your High threshold of " +
+                            "${filter.mediumMaxPedestrians} people/min."
+                    Sensitivity.Medium ->
+                        "That sits in your Medium band - between " +
+                            "${filter.lowMaxPedestrians} and " +
+                            "${filter.mediumMaxPedestrians} people/min."
+                    Sensitivity.Low ->
+                        "That is inside your Low band, under " +
+                            "${filter.lowMaxPedestrians} people/min."
+                    Sensitivity.Unknown ->
+                        "There is no band for this route, so it is shown unrated."
+                },
+                color = SenseInk,
+                fontSize = 13.sp,
+                lineHeight = 18.sp
+            )
+        } else {
+            Spacer(modifier = Modifier.height(8.dp))
+            Text(
+                text = "No pedestrian sensor covers this route, so it carries no sensory " +
+                    "rating at all - not a quiet one. Treat it as unknown.",
+                color = SenseMuted,
+                fontSize = 12.sp,
+                lineHeight = 17.sp
+            )
+        }
+    }
+}
+
+/**
+ * Where the reading falls across the three bands, drawn to the user's own
+ * thresholds. Counts past the top of the scale are pinned to the end rather than
+ * running off it.
+ */
+@Composable
+private fun BandBar(count: Double, filter: SensoryFilter) {
+    val scaleMax = maxOf(filter.mediumMaxPedestrians * 1.6, count * 1.15)
+    val lowWeight = (filter.lowMaxPedestrians / scaleMax).toFloat()
+    val mediumWeight = ((filter.mediumMaxPedestrians - filter.lowMaxPedestrians) / scaleMax).toFloat()
+    val highWeight = (1f - lowWeight - mediumWeight).coerceAtLeast(0.05f)
+    val markerFraction = (count / scaleMax).toFloat().coerceIn(0f, 1f)
+
+    Column {
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .height(10.dp)
+                .clip(RoundedCornerShape(5.dp))
+        ) {
+            Box(modifier = Modifier.weight(lowWeight).fillMaxHeight().background(SenseRiskLow))
+            Box(modifier = Modifier.weight(mediumWeight).fillMaxHeight().background(SenseRiskMedium))
+            Box(modifier = Modifier.weight(highWeight).fillMaxHeight().background(SenseRiskHigh))
+        }
+        Spacer(modifier = Modifier.height(4.dp))
+        // The marker sits under the bar on the same scale, so where the reading
+        // falls is readable without a legend.
+        Row(modifier = Modifier.fillMaxWidth()) {
+            if (markerFraction > 0f) {
+                Box(modifier = Modifier.weight(markerFraction))
+            }
+            Text("^", color = SenseInk, fontSize = 12.sp, fontWeight = FontWeight.Bold)
+            if (markerFraction < 1f) {
+                Box(modifier = Modifier.weight(1f - markerFraction))
+            }
+        }
+        // Each label sits at the left edge of the band it opens, on the same
+        // weights as the bar above, so the numbers line up with the colours.
+        Row(modifier = Modifier.fillMaxWidth()) {
+            Text(
+                text = "0",
+                modifier = Modifier.weight(lowWeight),
+                color = SenseMuted,
+                fontSize = 10.sp
+            )
+            Text(
+                text = "${filter.lowMaxPedestrians}",
+                modifier = Modifier.weight(mediumWeight),
+                color = SenseMuted,
+                fontSize = 10.sp
+            )
+            Text(
+                text = "${filter.mediumMaxPedestrians}+",
+                modifier = Modifier.weight(highWeight),
+                color = SenseMuted,
+                fontSize = 10.sp
+            )
+        }
+    }
+}
+
+/** One alternative route, with what choosing it would cost in time. */
+@Composable
+private fun AlternativeRouteRow(
+    route: ScoredRoute,
+    comparedWith: ScoredRoute,
+    comparedMinutes: Int?,
+    onUse: () -> Unit
+) {
+    val minutes = parseDurationMinutes(route.durationText)
+    val delta = if (minutes != null && comparedMinutes != null) minutes - comparedMinutes else null
+    val isQuieter = route.sensitivity.rank < comparedWith.sensitivity.rank
+
+    Row(
+        modifier = Modifier.fillMaxWidth().padding(vertical = 10.dp),
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        Box(
+            modifier = Modifier
+                .size(12.dp)
+                .clip(CircleShape)
+                .background(if (route.isScored) route.displayColor() else SenseMuted)
+        )
+        Spacer(modifier = Modifier.width(10.dp))
+        Column(modifier = Modifier.weight(1f)) {
+            Text(
+                text = route.summary,
+                color = SenseInk,
+                fontSize = 14.sp,
+                fontWeight = FontWeight.Bold,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis
+            )
+            Text(
+                text = listOfNotNull(
+                    if (route.isScored) "${route.sensitivity} load" else "Unrated",
+                    route.avgPedestrianCount?.let { "~${it.roundToInt()} people/min" },
+                    route.durationText.takeIf { it.isNotBlank() },
+                    when {
+                        delta == null || delta == 0 -> null
+                        delta > 0 -> "$delta min longer"
+                        else -> "${-delta} min shorter"
+                    }
+                ).joinToString(" - "),
+                color = SenseMuted,
+                fontSize = 12.sp,
+                lineHeight = 16.sp
+            )
+        }
+        Spacer(modifier = Modifier.width(8.dp))
+        Button(
+            onClick = onUse,
+            colors = ButtonDefaults.buttonColors(
+                containerColor = if (isQuieter) SenseBlue else SenseSoftBlue,
+                contentColor = if (isQuieter) Color.White else SenseBlue
+            ),
+            shape = RoundedCornerShape(12.dp)
+        ) {
+            Text("Use", fontSize = 12.sp)
+        }
+    }
+}
+
+/**
+ * The warning page reached with nothing scored yet - from the map or search
+ * screens, before any route has been requested. It explains what the page is for
+ * instead of showing a blank sheet, which is what the old screen did.
+ */
+@Composable
+private fun NoRouteWarningScreen(
+    warnings: List<WarningInfo>,
+    onBack: () -> Unit,
+    onPlanRoute: () -> Unit
+) {
+    Column(
+        modifier = Modifier
+            .fillMaxSize()
+            .background(Color.White)
+            .verticalScroll(rememberScrollState())
+            .padding(horizontal = 20.dp, vertical = 28.dp)
+    ) {
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            SmallRoundButton("<", onBack)
+            Spacer(modifier = Modifier.width(12.dp))
+            Text(
+                text = "Sensory alerts",
+                color = SenseInk,
+                fontSize = 18.sp,
+                fontWeight = FontWeight.Bold
+            )
+        }
+
+        Spacer(modifier = Modifier.height(20.dp))
+        Text(
+            text = "No route scored yet",
+            color = SenseInk,
+            fontSize = 20.sp,
+            fontWeight = FontWeight.Bold
+        )
+        Spacer(modifier = Modifier.height(8.dp))
+        Text(
+            text = "Sensory alerts are worked out for a specific walk: the pedestrian " +
+                "counts on the streets a route actually uses, measured against the " +
+                "thresholds you set. Pick a destination and this page will show what " +
+                "the rating on each option is based on.",
+            color = SenseMuted,
+            fontSize = 13.sp,
+            lineHeight = 19.sp
+        )
+
+        if (warnings.isNotEmpty()) {
+            Spacer(modifier = Modifier.height(22.dp))
+            WarningSectionTitle("Current area advisories")
+            warnings.forEach { warning ->
+                Spacer(modifier = Modifier.height(8.dp))
+                Text(
+                    text = "${warning.title} - ${warning.locationName}",
+                    color = SenseInk,
+                    fontSize = 14.sp,
+                    fontWeight = FontWeight.Bold
+                )
+                Text(
+                    text = "Crowd density ${warning.densityPercent}% - ${warning.riskSummary}",
+                    color = SenseMuted,
+                    fontSize = 12.sp,
+                    lineHeight = 17.sp
+                )
+                Text(
+                    text = "${warning.suggestedAction} (${warning.dataSource})",
+                    color = SenseMuted,
+                    fontSize = 12.sp,
+                    lineHeight = 17.sp
+                )
+            }
+        }
+
+        Spacer(modifier = Modifier.height(24.dp))
+        Button(
+            modifier = Modifier.fillMaxWidth(),
+            onClick = onPlanRoute,
+            colors = ButtonDefaults.buttonColors(containerColor = SenseBlue),
+            shape = RoundedCornerShape(14.dp)
+        ) {
+            Text("Plan a route")
+        }
+    }
+}
+
+@Composable
+private fun WarningSectionTitle(text: String) {
+    Text(
+        text = text,
+        modifier = Modifier.padding(bottom = 6.dp),
+        color = SenseInk,
+        fontSize = 16.sp,
+        fontWeight = FontWeight.Bold
+    )
+}
+
+@Composable
+private fun BulletLine(text: String) {
+    Row(modifier = Modifier.fillMaxWidth().padding(vertical = 5.dp)) {
+        Text("-", color = SenseBlue, fontSize = 13.sp, fontWeight = FontWeight.Bold)
+        Spacer(modifier = Modifier.width(8.dp))
+        Text(text, color = SenseInk, fontSize = 13.sp, lineHeight = 18.sp)
+    }
+}
+
+/**
+ * What a count of this size tends to feel like on a footpath. Phrased as a
+ * tendency rather than a promise: the app measures how many people are about,
+ * not how loud or bright the street is.
+ */
+private fun ScoredRoute.crowdingExplanation(): String = when (sensitivity) {
+    Sensitivity.High ->
+        "Counts this high are typical of a mall or a main street at peak. Expect a " +
+            "steady stream of people, little room to stop and step aside, and the " +
+            "noise that comes with a busy street - traffic, trams and conversation."
+    Sensitivity.Medium ->
+        "A moderate flow: people passing regularly, but with gaps and room to stop " +
+            "or slow down. Busier at crossings and near tram stops than along the " +
+            "stretches between them."
+    Sensitivity.Low ->
+        "Quiet by the sensors' standards - people passing occasionally rather than " +
+            "continuously, and space to stop without being in anyone's way."
+    Sensitivity.Unknown ->
+        "No sensor covers this route closely enough to say how busy it is, so it " +
+            "carries no rating either way."
+}
+
+/** How far off a route a calm place can be and still be worth suggesting. */
+private const val CalmNearRouteMeters = 700.0
 
 /**
  * Lets the user set the pedestrian counts that divide Low, Medium and High for
