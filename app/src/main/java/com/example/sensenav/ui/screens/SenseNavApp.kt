@@ -1105,6 +1105,7 @@ private fun RouteOptionsScreen(
     // already drawn solid, so the screen opens on a coherent choice rather than
     // on nothing being chosen.
     var chosenRouteIndex by remember { mutableStateOf(0) }
+    var showHighRiskAlert by remember { mutableStateOf(false) }
 
     var panelExpanded by remember { mutableStateOf(true) }
     var panelDrag by remember { mutableStateOf(0f) }
@@ -1211,6 +1212,16 @@ private fun RouteOptionsScreen(
     val loaded = state as? RoutesUiState.Loaded
     val ranked = loaded?.result?.routes?.rankedBySensory().orEmpty()
 
+    LaunchedEffect(ranked) {
+        val hasHighRiskRoute = ranked.any { route ->
+            route.sensitivity == Sensitivity.High
+        }
+
+        if (hasHighRiskRoute) {
+            showHighRiskAlert = true
+        }
+    }
+
     // A new set of routes invalidates the old pick.
     LaunchedEffect(ranked) { chosenRouteIndex = 0 }
 
@@ -1233,6 +1244,42 @@ private fun RouteOptionsScreen(
                 CameraUpdateFactory.newLatLngZoom(bounds.center, 14f)
             )
         }
+    }
+
+    if (showHighRiskAlert) {
+        AlertDialog(
+            onDismissRequest = {
+                showHighRiskAlert = false
+            },
+            title = {
+                Text("Sensory Overload Warning")
+            },
+            text = {
+                Text(
+                    "A high sensory-load route has been detected. " +
+                            "You may want to review the warning before continuing."
+                )
+            },
+            confirmButton = {
+                TextButton(
+                    onClick = {
+                        showHighRiskAlert = false
+                        onWarning()
+                    }
+                ) {
+                    Text("View Warning")
+                }
+            },
+            dismissButton = {
+                TextButton(
+                    onClick = {
+                        showHighRiskAlert = false
+                    }
+                ) {
+                    Text("Dismiss")
+                }
+            }
+        )
     }
 
     Column(modifier = Modifier.fillMaxSize().background(Color.White)) {
