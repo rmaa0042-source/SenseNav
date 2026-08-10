@@ -1,5 +1,6 @@
 package com.example.sensenav.ui.screens
 
+import androidx.annotation.DrawableRes
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
@@ -35,6 +36,7 @@ import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.ExperimentalMaterial3Api
+import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.NavigationBar
 import androidx.compose.material3.NavigationBarItem
@@ -68,6 +70,7 @@ import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.graphics.drawscope.clipRect
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import android.Manifest
@@ -1236,13 +1239,25 @@ private fun HomeScreen(
                 NavigationBarItem(
                     selected = true,
                     onClick = {},
-                    icon = { Text("Home") },
+                    icon = {
+                        // No contentDescription: the label below says the same thing,
+                        // and a description here would have TalkBack read it twice.
+                        Icon(
+                            painter = painterResource(id = R.drawable.ic_home),
+                            contentDescription = null
+                        )
+                    },
                     label = { Text("Home") }
                 )
                 NavigationBarItem(
                     selected = false,
                     onClick = onNearbyMap,
-                    icon = { Text("Map") },
+                    icon = {
+                        Icon(
+                            painter = painterResource(id = R.drawable.ic_map_pin),
+                            contentDescription = null
+                        )
+                    },
                     label = { Text("Refuges") }
                 )
             }
@@ -1294,9 +1309,9 @@ private fun HomeScreen(
                             overflow = TextOverflow.Ellipsis
                         )
                     }
-                    SmallRoundButton("Search", onSearch)
+                    RoundIconButton(R.drawable.ic_search, "Search", onSearch)
                     Spacer(modifier = Modifier.width(8.dp))
-                    SmallRoundButton("Filter", onFilter)
+                    RoundIconButton(R.drawable.ic_filter, "Filter", onFilter)
                 }
             }
 
@@ -1384,7 +1399,7 @@ private fun NoRefugesScreen(
             .padding(horizontal = 20.dp, vertical = 28.dp)
     ) {
         Row(verticalAlignment = Alignment.CenterVertically) {
-            SmallRoundButton("<", onBack)
+            BackButton(onBack)
             Spacer(modifier = Modifier.width(12.dp))
             Text(
                 text = "Nearby calm places",
@@ -1481,7 +1496,7 @@ private fun NearbyMapScreen(
                 .padding(horizontal = 16.dp, vertical = 34.dp),
             verticalAlignment = Alignment.CenterVertically
         ) {
-            SmallRoundButton("<", onBack)
+            BackButton(onBack)
             Spacer(modifier = Modifier.width(12.dp))
             Text(
                 text = "Nearby Sensory Refuges",
@@ -1490,7 +1505,7 @@ private fun NearbyMapScreen(
                 fontSize = 18.sp,
                 fontWeight = FontWeight.Bold
             )
-            SmallRoundButton("Filter", onFilter)
+            RoundIconButton(R.drawable.ic_filter, "Filter", onFilter)
         }
 
         SearchPill(
@@ -1525,7 +1540,11 @@ private fun NearbyMapScreen(
                     }
                     Spacer(modifier = Modifier.width(10.dp))
                     Button(onClick = onWarning, shape = RoundedCornerShape(12.dp)) {
-                        Text("Alert")
+                        Icon(
+                            painter = painterResource(id = R.drawable.ic_alert),
+                            contentDescription = "Sensory alert",
+                            modifier = Modifier.size(20.dp)
+                        )
                     }
                 }
             }
@@ -1632,7 +1651,7 @@ private fun SearchScreen(
             .padding(horizontal = 20.dp, vertical = 28.dp)
     ) {
         Row(verticalAlignment = Alignment.CenterVertically) {
-            SmallRoundButton("<", onBack)
+            BackButton(onBack)
             Text(
                 text = "Search",
                 modifier = Modifier.weight(1f),
@@ -1640,7 +1659,7 @@ private fun SearchScreen(
                 fontSize = 18.sp,
                 fontWeight = FontWeight.Bold
             )
-            SmallRoundButton("Alert", onWarning)
+            RoundIconButton(R.drawable.ic_alert, "Sensory alert", onWarning)
         }
 
         Spacer(modifier = Modifier.height(18.dp))
@@ -2065,8 +2084,7 @@ private fun RouteOptionsScreen(
                 )
             }
             // Kept in both states: collapsing hides the planner, not the way out.
-            SmallRoundButton(
-                text = "<",
+            BackButton(
                 onClick = onBack,
                 modifier = Modifier
                     .align(Alignment.TopStart)
@@ -2075,8 +2093,9 @@ private fun RouteOptionsScreen(
             // Sits opposite the back button, and stays put when the panel
             // collapses for the same reason it does. Changing a threshold here
             // re-bands the routes already on screen.
-            SmallRoundButton(
-                text = "Filter",
+            RoundIconButton(
+                iconRes = R.drawable.ic_filter,
+                contentDescription = "Filter",
                 onClick = onFilter,
                 modifier = Modifier
                     .align(Alignment.TopEnd)
@@ -2612,8 +2631,7 @@ private fun NavigationScreen(
                 contentPadding = PaddingValues(top = 190.dp)
             )
 
-            SmallRoundButton(
-                text = "<",
+            BackButton(
                 onClick = onBack,
                 modifier = Modifier
                     .align(Alignment.TopStart)
@@ -2933,8 +2951,7 @@ private fun WarningScreen(
                 cameraPositionState = cameraPositionState,
                 contentPadding = PaddingValues(top = 70.dp)
             )
-            SmallRoundButton(
-                text = "<",
+            BackButton(
                 onClick = onBack,
                 modifier = Modifier.padding(start = 18.dp, top = 24.dp)
             )
@@ -3318,7 +3335,7 @@ private fun NoRouteWarningScreen(
             .padding(horizontal = 20.dp, vertical = 28.dp)
     ) {
         Row(verticalAlignment = Alignment.CenterVertically) {
-            SmallRoundButton("<", onBack)
+            BackButton(onBack)
             Spacer(modifier = Modifier.width(12.dp))
             Text(
                 text = "Sensory alerts",
@@ -4021,6 +4038,51 @@ private fun SmallRoundButton(text: String, onClick: () -> Unit, modifier: Modifi
     ) {
         Text(text, color = SenseInk, fontSize = 11.sp, fontWeight = FontWeight.Bold)
     }
+}
+
+/**
+ * The icon twin of [SmallRoundButton]. The button stays 44.dp whatever
+ * [iconSize] is, so a glyph can be made more legible without growing the tap
+ * target - or shrinking it, which would matter more.
+ */
+@Composable
+private fun RoundIconButton(
+    @DrawableRes iconRes: Int,
+    contentDescription: String,
+    onClick: () -> Unit,
+    modifier: Modifier = Modifier,
+    iconSize: Dp = 22.dp
+) {
+    Box(
+        modifier = modifier
+            .size(44.dp)
+            .clip(CircleShape)
+            .background(Color.White)
+            .clickable(onClick = onClick),
+        contentAlignment = Alignment.Center
+    ) {
+        Icon(
+            painter = painterResource(id = iconRes),
+            contentDescription = contentDescription,
+            modifier = Modifier.size(iconSize),
+            tint = SenseInk
+        )
+    }
+}
+
+/** The one back affordance, so every screen's is the same size and shape. */
+@Composable
+private fun BackButton(onClick: () -> Unit, modifier: Modifier = Modifier) {
+    RoundIconButton(
+        iconRes = R.drawable.ic_chevron_left,
+        contentDescription = "Back",
+        onClick = onClick,
+        modifier = modifier,
+        // Deliberately larger than the rest of the set. It is the control users
+        // reach for most and the old "<" glyph was set at 11.sp, which left a
+        // 44.dp button holding an arrow a few pixels across.
+        iconSize = 28.dp
+    )
 }
 
 @Composable

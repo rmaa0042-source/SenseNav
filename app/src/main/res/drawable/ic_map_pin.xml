@@ -1,0 +1,22 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Map pin - the nearby-refuges tab. -->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="24dp"
+    android:height="24dp"
+    android:viewportWidth="24"
+    android:viewportHeight="24">
+    <path
+        android:fillColor="#00000000"
+        android:strokeColor="#FF000000"
+        android:strokeWidth="2"
+        android:strokeLineCap="round"
+        android:strokeLineJoin="round"
+        android:pathData="M12,2.8 C8.9,2.8 6.4,5.3 6.4,8.4 C6.4,12.6 12,20.5 12,20.5 C12,20.5 17.6,12.6 17.6,8.4 C17.6,5.3 15.1,2.8 12,2.8 Z" />
+    <path
+        android:fillColor="#00000000"
+        android:strokeColor="#FF000000"
+        android:strokeWidth="2"
+        android:strokeLineCap="round"
+        android:strokeLineJoin="round"
+        android:pathData="M13.9,8.4 C13.9,9.44937 13.04937,10.3 12,10.3 C10.95063,10.3 10.1,9.44937 10.1,8.4 C10.1,7.350630000000001 10.95063,6.5 12,6.5 C13.04937,6.5 13.9,7.350630000000001 13.9,8.4 Z" />
+</vector>
