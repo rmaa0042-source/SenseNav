@@ -1297,7 +1297,7 @@ private fun HomeScreen(
                             overflow = TextOverflow.Ellipsis
                         )
                         Text(
-                            text = "$locationLabel  (edit)",
+                            text = "$locationLabel",
                             modifier = Modifier
                                 .clip(RoundedCornerShape(6.dp))
                                 .clickable(onClick = onEditLocation)
