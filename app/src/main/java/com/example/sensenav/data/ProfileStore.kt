@@ -20,11 +20,26 @@ class ProfileStore(context: Context) {
     fun displayName(): String =
         prefs.getString(KEY_NAME, null)?.takeIf { it.isNotBlank() } ?: DEFAULT_NAME
 
+    fun isLoginRemembered(): Boolean = prefs.getBoolean(KEY_REMEMBER_LOGIN, false)
+
+    fun saveLoginDisplayName(name: String, rememberLogin: Boolean): String {
+        val cleaned = cleanDisplayName(name)
+        prefs.edit()
+            .putString(KEY_NAME, cleaned)
+            .putBoolean(KEY_REMEMBER_LOGIN, rememberLogin)
+            .apply()
+        return cleaned
+    }
+
     /** Returns the stored value, which may differ from the input after trimming. */
     fun saveDisplayName(name: String): String {
-        val cleaned = name.trim().take(MAX_NAME_CHARS).ifBlank { DEFAULT_NAME }
+        val cleaned = cleanDisplayName(name)
         prefs.edit().putString(KEY_NAME, cleaned).apply()
         return cleaned
+    }
+
+    fun clearRememberedLogin() {
+        prefs.edit().putBoolean(KEY_REMEMBER_LOGIN, false).apply()
     }
 
     /**
@@ -49,10 +64,14 @@ class ProfileStore(context: Context) {
         prefs.edit().remove(KEY_PLACE).apply()
     }
 
+    private fun cleanDisplayName(name: String): String =
+        name.trim().take(MAX_NAME_CHARS).ifBlank { DEFAULT_NAME }
+
     private companion object {
         const val PREFS_NAME = "sensenav_profile"
         const val KEY_NAME = "display_name"
         const val KEY_PLACE = "saved_place"
+        const val KEY_REMEMBER_LOGIN = "remember_login"
         const val DEFAULT_NAME = "Matr Kohler"
         const val MAX_NAME_CHARS = 40
     }

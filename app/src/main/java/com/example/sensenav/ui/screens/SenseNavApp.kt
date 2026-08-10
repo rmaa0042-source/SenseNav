@@ -33,6 +33,7 @@ import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
+import androidx.compose.material3.Checkbox
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.NavigationBar
 import androidx.compose.material3.NavigationBarItem
@@ -59,6 +60,7 @@ import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
@@ -146,6 +148,7 @@ private val ScreenBg = Color(0xFFF7F9FD)
 private val SenseRiskLow = Color(0xFF3B8BD4)
 private val SenseRiskMedium = Color(0xFFEF9F27)
 private val SenseRiskHigh = Color(0xFFE24B4A)
+private const val GuestDisplayName = "Guest Explorer"
 
 private fun ScoredRoute.displayColor(): Color =
     colorHex?.let { hex -> runCatching { Color(AndroidColor.parseColor(hex)) }.getOrNull() }
@@ -205,6 +208,7 @@ private sealed interface RoutesUiState {
 
 private enum class AppScreen {
     Splash,
+    Login,
     Home,
     NearbyMap,
     Search,
@@ -228,6 +232,20 @@ private data class NavigationPlan(
     val destination: GeoPoint,
     val destinationName: String
 )
+
+private fun String.toDisplayName(): String {
+    val localPart = substringBefore("@")
+        .replace(Regex("[._-]+"), " ")
+        .trim()
+
+    return localPart
+        .split(" ")
+        .filter { it.isNotBlank() }
+        .joinToString(" ") { word ->
+            word.replaceFirstChar { it.uppercase() }
+        }
+        .ifBlank { "SenseNav User" }
+}
 
 @Composable
 fun SenseNavApp() {
@@ -438,8 +456,23 @@ fun SenseNavApp() {
                 // Replaces the splash rather than stacking on it: once it has
                 // cleared there is nothing to go back to.
                 backStack.clear()
-                backStack.add(AppScreen.Home)
+                backStack.add(
+                    if (profileStore.isLoginRemembered()) AppScreen.Home else AppScreen.Login
+                )
             })
+            AppScreen.Login -> LoginScreen(
+                onLoginSuccess = { enteredName, rememberLogin ->
+                    displayName = profileStore.saveLoginDisplayName(enteredName, rememberLogin)
+                    backStack.clear()
+                    backStack.add(AppScreen.Home)
+                },
+                onContinueAsGuest = {
+                    profileStore.clearRememberedLogin()
+                    displayName = GuestDisplayName
+                    backStack.clear()
+                    backStack.add(AppScreen.Home)
+                }
+            )
             AppScreen.Home -> HomeScreen(
                 refuges = refuges,
                 displayName = displayName,
@@ -609,6 +642,127 @@ fun SenseNavApp() {
             )
         }
       }
+    }
+}
+
+@Composable
+private fun LoginScreen(
+    onLoginSuccess: (String, Boolean) -> Unit,
+    onContinueAsGuest: () -> Unit
+) {
+    var email by remember { mutableStateOf("matr.kohler@example.com") }
+    var password by remember { mutableStateOf("sensenav") }
+    var rememberMe by remember { mutableStateOf(true) }
+    val canLogin = email.isNotBlank() && password.isNotBlank()
+
+    Box(
+        modifier = Modifier
+            .fillMaxSize()
+            .background(
+                Brush.verticalGradient(
+                    listOf(
+                        Color(0xFFF3F7FF),
+                        Color.White,
+                        Color(0xFFFFF6F8)
+                    )
+                )
+            )
+    ) {
+        Column(
+            modifier = Modifier
+                .fillMaxSize()
+                .verticalScroll(rememberScrollState())
+                .padding(horizontal = 24.dp, vertical = 48.dp),
+            horizontalAlignment = Alignment.CenterHorizontally
+        ) {
+            Box(
+                modifier = Modifier
+                    .size(78.dp)
+                    .clip(RoundedCornerShape(24.dp))
+                    .background(Brush.linearGradient(listOf(SenseBlue, Color(0xFF7B61FF)))),
+                contentAlignment = Alignment.Center
+            ) {
+                Text("M", color = Color.White, fontSize = 42.sp, fontWeight = FontWeight.Black)
+            }
+            Spacer(modifier = Modifier.height(18.dp))
+            Text("Welcome to SenseNav", color = SenseInk, fontSize = 28.sp, fontWeight = FontWeight.Black)
+            Spacer(modifier = Modifier.height(8.dp))
+            Text(
+                text = "Plan calmer routes, find nearby refuges, and keep sensory alerts close.",
+                color = SenseMuted,
+                fontSize = 14.sp,
+                lineHeight = 20.sp
+            )
+
+            Spacer(modifier = Modifier.height(34.dp))
+            Card(
+                modifier = Modifier.fillMaxWidth(),
+                shape = RoundedCornerShape(28.dp),
+                colors = CardDefaults.cardColors(containerColor = Color.White),
+                elevation = CardDefaults.cardElevation(defaultElevation = 10.dp)
+            ) {
+                Column(modifier = Modifier.padding(22.dp)) {
+                    Text("Log in", color = SenseInk, fontSize = 22.sp, fontWeight = FontWeight.Bold)
+                    Text("Use the demo details or enter your own.", color = SenseMuted, fontSize = 13.sp)
+
+                    Spacer(modifier = Modifier.height(20.dp))
+                    OutlinedTextField(
+                        value = email,
+                        onValueChange = { email = it },
+                        modifier = Modifier.fillMaxWidth(),
+                        label = { Text("Email") },
+                        singleLine = true,
+                        shape = RoundedCornerShape(18.dp)
+                    )
+
+                    Spacer(modifier = Modifier.height(12.dp))
+                    OutlinedTextField(
+                        value = password,
+                        onValueChange = { password = it },
+                        modifier = Modifier.fillMaxWidth(),
+                        label = { Text("Password") },
+                        singleLine = true,
+                        visualTransformation = PasswordVisualTransformation(),
+                        shape = RoundedCornerShape(18.dp)
+                    )
+
+                    Spacer(modifier = Modifier.height(8.dp))
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Checkbox(
+                            checked = rememberMe,
+                            onCheckedChange = { rememberMe = it }
+                        )
+                        Text("Remember me", color = SenseMuted, fontSize = 13.sp)
+                    }
+
+                    Spacer(modifier = Modifier.height(12.dp))
+                    Button(
+                        modifier = Modifier.fillMaxWidth(),
+                        enabled = canLogin,
+                        onClick = { onLoginSuccess(email.toDisplayName(), rememberMe) },
+                        colors = ButtonDefaults.buttonColors(containerColor = SenseBlue),
+                        shape = RoundedCornerShape(16.dp)
+                    ) {
+                        Text("Log in")
+                    }
+
+                    Spacer(modifier = Modifier.height(10.dp))
+                    TextButton(
+                        modifier = Modifier.fillMaxWidth(),
+                        onClick = onContinueAsGuest
+                    ) {
+                        Text("Continue as guest", color = SenseBlue)
+                    }
+                }
+            }
+
+            Spacer(modifier = Modifier.height(24.dp))
+            Text(
+                text = "Sensory-aware navigation for Melbourne",
+                color = SenseMuted,
+                fontSize = 12.sp
+            )
+        }
     }
 }
 
