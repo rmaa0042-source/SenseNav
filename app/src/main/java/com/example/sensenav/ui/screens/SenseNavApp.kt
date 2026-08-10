@@ -58,12 +58,14 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.geometry.CornerRadius
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.Path
 import androidx.compose.ui.graphics.drawscope.Stroke
+import androidx.compose.ui.graphics.drawscope.clipRect
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
@@ -154,7 +156,6 @@ private val SenseGreen = Color(0xFF1B9F5A)
 private val ScreenBg = Color(0xFFF7F9FD)
 private val OnboardingBg = Color(0xFFE4DDEC)
 private val OnboardingBorder = Color(0xFFE7EAF0)
-private val StarGold = Color(0xFFE6AD00)
 
 // Sampled from the brand artwork, so the wordmark matches the navy in the mark.
 private val SenseLogoInk = Color(0xFF19144E)
@@ -246,30 +247,6 @@ private data class NavigationPlan(
     val destination: GeoPoint,
     val destinationName: String
 )
-
-private enum class OnboardingThreshold(
-    val label: String,
-    val lowMaxPedestrians: Int,
-    val mediumMaxPedestrians: Int
-) {
-    LowQuiet("Low Quiet", 30, 100),
-    Medium("Medium", 50, 160),
-    High("High", 80, 250);
-
-    fun toFilter(radiusKm: Int): SensoryFilter = SensoryFilter(
-        lowMaxPedestrians = lowMaxPedestrians,
-        mediumMaxPedestrians = mediumMaxPedestrians,
-        radiusKm = radiusKm
-    ).normalised()
-
-    companion object {
-        fun from(filter: SensoryFilter): OnboardingThreshold = when {
-            filter.lowMaxPedestrians >= High.lowMaxPedestrians -> High
-            filter.lowMaxPedestrians >= Medium.lowMaxPedestrians -> Medium
-            else -> LowQuiet
-        }
-    }
-}
 
 @Composable
 fun SenseNavApp() {
@@ -489,16 +466,22 @@ fun SenseNavApp() {
                 )
             })
             AppScreen.Onboarding -> OnboardingScreen(
-                initialSensitivityRange = profileStore.sensitivityRange(),
-                initialThreshold = OnboardingThreshold.from(sensoryFilter),
-                initialPreferenceRating = profileStore.sensoryPreferenceRating(),
-                onGetStarted = { name, sensitivityRange, threshold, preferenceRating ->
+                initialFilter = sensoryFilter,
+                initialPlace = savedPlace,
+                geocoder = placeGeocoder,
+                onGetStarted = { name, filter, place ->
                     displayName = profileStore.saveOnboardingProfile(
-                        name = name.ifBlank { displayName },
-                        sensitivityRange = sensitivityRange,
-                        preferenceRating = preferenceRating
+                        name = name.ifBlank { displayName }
                     )
-                    sensoryFilter = filterStore.save(threshold.toFilter(sensoryFilter.radiusKm))
+                    // The same store the filter sheet writes to, so whichever one
+                    // the user touched last is what routes are scored against.
+                    sensoryFilter = filterStore.save(filter)
+                    if (place == null) {
+                        profileStore.clearPlace()
+                        savedPlace = null
+                    } else {
+                        savedPlace = profileStore.savePlace(place)
+                    }
                     backStack.clear()
                     backStack.add(AppScreen.Home)
                 }
@@ -854,22 +837,58 @@ private fun androidx.compose.ui.graphics.drawscope.DrawScope.drawSwirl(
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 private fun OnboardingScreen(
-    initialSensitivityRange: ClosedFloatingPointRange<Float>,
-    initialThreshold: OnboardingThreshold,
-    initialPreferenceRating: Int,
+    initialFilter: SensoryFilter,
+    initialPlace: SavedPlace?,
+    geocoder: PlaceGeocoder,
     onGetStarted: (
         name: String,
-        sensitivityRange: ClosedFloatingPointRange<Float>,
-        threshold: OnboardingThreshold,
-        preferenceRating: Int
+        filter: SensoryFilter,
+        place: SavedPlace?
     ) -> Unit
 ) {
     var name by remember { mutableStateOf("") }
-    var sensitivityRange by remember {
-        mutableStateOf(initialSensitivityRange.start.coerceIn(0f, 1f)..initialSensitivityRange.endInclusive.coerceIn(0f, 1f))
+    // The same type the filter sheet edits, so the numbers this screen shows are
+    // the ones routes are actually scored against - and normalised() does all the
+    // clamping for both sliders.
+    var filter by remember { mutableStateOf(initialFilter.normalised()) }
+    var locationQuery by remember { mutableStateOf(initialPlace?.label.orEmpty()) }
+    var locationError by remember { mutableStateOf<String?>(null) }
+    var checkingLocation by remember { mutableStateOf(false) }
+    val focusManager = LocalFocusManager.current
+    val scope = rememberCoroutineScope()
+
+    // An empty field is not an error: it means "follow the device", which is the
+    // app's default. Anything typed is geocoded before the screen will advance,
+    // so a place that cannot be found is caught here rather than anchoring every
+    // later search somewhere wrong.
+    val finish = {
+        val typed = locationQuery.trim()
+        when {
+            typed.isEmpty() -> onGetStarted(name.trim(), filter, null)
+            // Untouched from what was already pinned, so its coordinates still hold
+            // and there is nothing to look up again.
+            typed == initialPlace?.label -> onGetStarted(name.trim(), filter, initialPlace)
+            else -> {
+                checkingLocation = true
+                locationError = null
+                scope.launch {
+                    val point = runCatching { geocoder.resolve(typed) }.getOrNull()
+                    checkingLocation = false
+                    if (point == null) {
+                        locationError =
+                            "Couldn't find \"$typed\". Try a suburb or a fuller address."
+                    } else {
+                        onGetStarted(
+                            name.trim(),
+                            filter,
+                            SavedPlace(typed, point.latitude, point.longitude)
+                        )
+                    }
+                }
+                Unit
+            }
+        }
     }
-    var threshold by remember { mutableStateOf(initialThreshold) }
-    var preferenceRating by remember { mutableStateOf(initialPreferenceRating.coerceIn(1, 5)) }
 
     Box(
         modifier = Modifier
@@ -938,20 +957,99 @@ private fun OnboardingScreen(
                         text = "Sensory Sensitivity Level",
                         modifier = Modifier.weight(1f),
                         color = SenseInk,
-                        fontSize = 16.sp,
+                        fontSize = 18.sp,
                         fontWeight = FontWeight.Medium
                     )
-                    Text("Low - High", color = Color(0xFFB7BDCA), fontSize = 15.sp)
+                    Text(
+                        text = "${filter.lowMaxPedestrians} - ${filter.mediumMaxPedestrians}",
+                        color = SenseBlue,
+                        fontSize = 16.sp,
+                        fontWeight = FontWeight.Bold
+                    )
                 }
-                Spacer(modifier = Modifier.height(12.dp))
+                Spacer(modifier = Modifier.height(4.dp))
+                Text(
+                    text = "Measured in people per minute on nearby footpath sensors. " +
+                        "The two handles set where quiet ends and busy begins.",
+                    color = SenseMuted,
+                    fontSize = 13.sp,
+                    lineHeight = 17.sp
+                )
+                Spacer(modifier = Modifier.height(8.dp))
                 RangeSlider(
-                    value = sensitivityRange,
+                    value = filter.lowMaxPedestrians.toFloat()..
+                        filter.mediumMaxPedestrians.toFloat(),
                     onValueChange = { selected ->
-                        val start = selected.start.coerceIn(0f, 0.90f)
-                        val end = selected.endInclusive.coerceIn(start + 0.10f, 1f)
-                        sensitivityRange = start..end
+                        // normalised() keeps the handles a step apart and inside
+                        // their bounds: dragging Low into Medium pushes Medium up,
+                        // and Low itself stops halfway up the scale, past which it
+                        // no longer means "quiet".
+                        filter = filter.copy(
+                            lowMaxPedestrians = selected.start.toStep(),
+                            mediumMaxPedestrians = selected.endInclusive.toStep()
+                        ).normalised()
                     },
-                    valueRange = 0f..1f,
+                    valueRange = SensoryFilter.PEDESTRIAN_STEP.toFloat()..
+                        SensoryFilter.MAX_PEDESTRIANS.toFloat(),
+                    // Dark rather than SenseBlue: the handles sit on top of the
+                    // Low band, which is itself a blue, and two blues that close
+                    // together lose the handle against the track.
+                    colors = SliderDefaults.colors(thumbColor = SenseInk),
+                    track = {
+                        SensitivityTrack(
+                            lowFraction = filter.lowMaxPedestrians.fractionOfScale(),
+                            mediumFraction = filter.mediumMaxPedestrians.fractionOfScale()
+                        )
+                    }
+                )
+                Spacer(modifier = Modifier.height(10.dp))
+                SensitivityBandRow(
+                    tint = SenseRiskLow,
+                    label = "Low",
+                    value = "under ${filter.lowMaxPedestrians} people"
+                )
+                Spacer(modifier = Modifier.height(8.dp))
+                SensitivityBandRow(
+                    tint = SenseRiskMedium,
+                    label = "Medium",
+                    value = "${filter.lowMaxPedestrians} to ${filter.mediumMaxPedestrians} people"
+                )
+                Spacer(modifier = Modifier.height(8.dp))
+                SensitivityBandRow(
+                    tint = SenseRiskHigh,
+                    label = "High",
+                    value = "${filter.mediumMaxPedestrians} people and above"
+                )
+
+                Spacer(modifier = Modifier.height(24.dp))
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Text(
+                        text = "Search Range",
+                        modifier = Modifier.weight(1f),
+                        color = SenseInk,
+                        fontSize = 18.sp,
+                        fontWeight = FontWeight.Medium
+                    )
+                    Text(
+                        text = "${filter.radiusKm} km",
+                        color = SenseBlue,
+                        fontSize = 16.sp,
+                        fontWeight = FontWeight.Bold
+                    )
+                }
+                Spacer(modifier = Modifier.height(4.dp))
+                Text(
+                    text = "How far out to look for refuges and quieter routes.",
+                    color = SenseMuted,
+                    fontSize = 13.sp,
+                    lineHeight = 17.sp
+                )
+                Spacer(modifier = Modifier.height(8.dp))
+                Slider(
+                    value = filter.radiusKm.toFloat(),
+                    onValueChange = { filter = filter.copy(radiusKm = it.roundToInt()) },
+                    valueRange = SensoryFilter.MIN_RADIUS_KM.toFloat()..
+                        SensoryFilter.MAX_RADIUS_KM.toFloat(),
                     colors = SliderDefaults.colors(
                         thumbColor = SenseBlue,
                         activeTrackColor = SenseBlue,
@@ -961,40 +1059,40 @@ private fun OnboardingScreen(
 
                 Spacer(modifier = Modifier.height(24.dp))
                 Text(
-                    text = "Sensory Threshold",
+                    text = "Default Location",
                     color = SenseInk,
                     fontSize = 18.sp,
                     fontWeight = FontWeight.Medium
                 )
-                Spacer(modifier = Modifier.height(18.dp))
-                Row(horizontalArrangement = Arrangement.spacedBy(14.dp)) {
-                    OnboardingThreshold.entries.forEach { option ->
-                        ThresholdOptionButton(
-                            text = option.label,
-                            selected = threshold == option,
-                            modifier = Modifier.weight(1f),
-                            onClick = { threshold = option }
-                        )
-                    }
-                }
-
-                Spacer(modifier = Modifier.height(34.dp))
+                Spacer(modifier = Modifier.height(4.dp))
                 Text(
-                    text = "Sensory Preference",
-                    color = SenseInk,
-                    fontSize = 18.sp,
-                    fontWeight = FontWeight.Medium
+                    text = "Where searches start from. Leave it empty to follow your " +
+                        "device as you move.",
+                    color = SenseMuted,
+                    fontSize = 13.sp,
+                    lineHeight = 17.sp
                 )
-                Spacer(modifier = Modifier.height(18.dp))
-                Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-                    (5 downTo 1).forEach { rating ->
-                        RatingPreferenceButton(
-                            rating = rating,
-                            selected = preferenceRating == rating,
-                            modifier = Modifier.weight(1f),
-                            onClick = { preferenceRating = rating }
-                        )
-                    }
+                Spacer(modifier = Modifier.height(12.dp))
+                OutlinedTextField(
+                    value = locationQuery,
+                    onValueChange = { locationQuery = it; locationError = null },
+                    modifier = Modifier.fillMaxWidth(),
+                    placeholder = { Text("Suburb or address", color = SenseMuted) },
+                    singleLine = true,
+                    enabled = !checkingLocation,
+                    isError = locationError != null,
+                    shape = RoundedCornerShape(18.dp),
+                    keyboardOptions = KeyboardOptions(imeAction = ImeAction.Done),
+                    keyboardActions = KeyboardActions(onDone = { focusManager.clearFocus() }),
+                    colors = OutlinedTextFieldDefaults.colors(
+                        focusedBorderColor = OnboardingBorder,
+                        unfocusedBorderColor = OnboardingBorder,
+                        cursorColor = SenseBlue
+                    )
+                )
+                locationError?.let { message ->
+                    Spacer(modifier = Modifier.height(6.dp))
+                    Text(message, color = SensePink, fontSize = 12.sp, lineHeight = 16.sp)
                 }
             }
 
@@ -1003,94 +1101,93 @@ private fun OnboardingScreen(
                 modifier = Modifier
                     .fillMaxWidth()
                     .height(58.dp),
-                onClick = { onGetStarted(name.trim(), sensitivityRange, threshold, preferenceRating) },
+                onClick = finish,
+                enabled = !checkingLocation,
                 colors = ButtonDefaults.buttonColors(containerColor = SenseBlue),
                 shape = RoundedCornerShape(12.dp)
             ) {
-                Text("Get Started", color = Color.White, fontSize = 18.sp, fontWeight = FontWeight.Bold)
+                Text(
+                    text = if (checkingLocation) "Checking location..." else "Get Started",
+                    color = Color.White,
+                    fontSize = 18.sp,
+                    fontWeight = FontWeight.Bold
+                )
             }
             Spacer(modifier = Modifier.height(18.dp))
         }
     }
 }
 
+/**
+ * Rounds a slider position to a whole [SensoryFilter.PEDESTRIAN_STEP], so a drag
+ * lands on a number worth reading rather than "37 people per minute".
+ */
+private fun Float.toStep(): Int =
+    (this / SensoryFilter.PEDESTRIAN_STEP).roundToInt() * SensoryFilter.PEDESTRIAN_STEP
+
+/** Where a pedestrian count sits along the sensitivity slider's scale, as 0f..1f. */
+private fun Int.fractionOfScale(): Float {
+    val first = SensoryFilter.PEDESTRIAN_STEP.toFloat()
+    val last = SensoryFilter.MAX_PEDESTRIANS.toFloat()
+    return ((this - first) / (last - first)).coerceIn(0f, 1f)
+}
+
+/**
+ * The sensitivity slider's track, painted in the three band colours instead of
+ * one accent, so the bar itself shows how much of the scale the handles have
+ * given to Low, Medium and High.
+ *
+ * Each band redraws the whole rounded bar clipped to its own slice. That keeps
+ * the outer ends round and the two internal boundaries square, and a band
+ * squeezed to nothing simply draws nothing rather than needing a special case.
+ */
 @Composable
-private fun ThresholdOptionButton(
-    text: String,
-    selected: Boolean,
-    modifier: Modifier = Modifier,
-    onClick: () -> Unit
+private fun SensitivityTrack(
+    lowFraction: Float,
+    mediumFraction: Float,
+    modifier: Modifier = Modifier
 ) {
-    Box(
+    Canvas(
         modifier = modifier
-            .height(58.dp)
-            .clip(RoundedCornerShape(10.dp))
-            .background(if (selected) SenseBlue else Color.White)
-            .border(
-                width = 1.dp,
-                color = if (selected) SenseBlue else OnboardingBorder,
-                shape = RoundedCornerShape(10.dp)
-            )
-            .clickable(onClick = onClick),
-        contentAlignment = Alignment.Center
+            .fillMaxWidth()
+            .height(20.dp)
     ) {
-        Text(
-            text = text,
-            color = if (selected) Color.White else SenseBlue,
-            fontSize = 16.sp,
-            fontWeight = if (selected) FontWeight.Bold else FontWeight.Medium,
-            maxLines = 1,
-            overflow = TextOverflow.Ellipsis
-        )
+        val barHeight = 6.dp.toPx()
+        val top = (size.height - barHeight) / 2f
+        val corner = CornerRadius(barHeight / 2f)
+        val lowEnd = size.width * lowFraction
+        val mediumEnd = size.width * mediumFraction
+
+        fun band(from: Float, to: Float, color: Color) {
+            if (to <= from) return
+            clipRect(left = from, right = to) {
+                drawRoundRect(
+                    color = color,
+                    topLeft = Offset(0f, top),
+                    size = Size(size.width, barHeight),
+                    cornerRadius = corner
+                )
+            }
+        }
+
+        band(0f, lowEnd, SenseRiskLow)
+        band(lowEnd, mediumEnd, SenseRiskMedium)
+        band(mediumEnd, size.width, SenseRiskHigh)
     }
 }
 
+/**
+ * One band of the sensitivity scale: the colour routes get rated with, the name,
+ * and the pedestrian counts the handles above have just set for it.
+ */
 @Composable
-private fun RatingPreferenceButton(
-    rating: Int,
-    selected: Boolean,
-    modifier: Modifier = Modifier,
-    onClick: () -> Unit
-) {
-    Box(
-        modifier = modifier
-            .height(60.dp)
-            .clip(RoundedCornerShape(14.dp))
-            .background(Color.White)
-            .border(
-                width = if (selected) 1.5.dp else 1.dp,
-                color = if (selected) SenseBlue else OnboardingBorder,
-                shape = RoundedCornerShape(14.dp)
-            )
-            .clickable(onClick = onClick),
-        contentAlignment = Alignment.Center
-    ) {
-        Row(verticalAlignment = Alignment.CenterVertically) {
-            StarIcon(modifier = Modifier.size(19.dp), color = StarGold)
-            Spacer(modifier = Modifier.width(5.dp))
-            Text(rating.toString(), color = SenseInk, fontSize = 14.sp, fontWeight = FontWeight.Medium)
-        }
-    }
-}
-
-@Composable
-private fun StarIcon(modifier: Modifier = Modifier, color: Color) {
-    Canvas(modifier = modifier) {
-        val outer = minOf(size.width, size.height) / 2f
-        val inner = outer * 0.52f
-        val centre = Offset(size.width / 2f, size.height / 2f)
-        val path = Path()
-        for (index in 0 until 10) {
-            val radius = if (index % 2 == 0) outer else inner
-            val angle = (-90f + index * 36f) * PI.toFloat() / 180f
-            val point = Offset(
-                x = centre.x + cos(angle) * radius,
-                y = centre.y + sin(angle) * radius
-            )
-            if (index == 0) path.moveTo(point.x, point.y) else path.lineTo(point.x, point.y)
-        }
-        path.close()
-        drawPath(path, color)
+private fun SensitivityBandRow(tint: Color, label: String, value: String) {
+    Row(verticalAlignment = Alignment.CenterVertically) {
+        Box(modifier = Modifier.size(10.dp).background(tint, CircleShape))
+        Spacer(modifier = Modifier.width(10.dp))
+        Text(label, color = SenseInk, fontSize = 14.sp, fontWeight = FontWeight.Medium)
+        Spacer(modifier = Modifier.weight(1f))
+        Text(value, color = SenseMuted, fontSize = 13.sp)
     }
 }
 

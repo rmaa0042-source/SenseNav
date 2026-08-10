@@ -23,17 +23,6 @@ class ProfileStore(context: Context) {
     fun hasCompletedOnboarding(): Boolean =
         prefs.getBoolean(KEY_ONBOARDING_COMPLETE, false)
 
-    fun sensitivityRange(): ClosedFloatingPointRange<Float> {
-        val start = prefs.getFloat(KEY_SENSITIVITY_START, DEFAULT_SENSITIVITY_START)
-            .coerceIn(0f, 1f)
-        val end = prefs.getFloat(KEY_SENSITIVITY_END, DEFAULT_SENSITIVITY_END)
-            .coerceIn(start, 1f)
-        return start..end
-    }
-
-    fun sensoryPreferenceRating(): Int =
-        prefs.getInt(KEY_PREFERENCE_RATING, DEFAULT_PREFERENCE_RATING).coerceIn(1, 5)
-
     /** Returns the stored value, which may differ from the input after trimming. */
     fun saveDisplayName(name: String): String {
         val cleaned = name.trim().take(MAX_NAME_CHARS).ifBlank { DEFAULT_NAME }
@@ -41,19 +30,16 @@ class ProfileStore(context: Context) {
         return cleaned
     }
 
-    fun saveOnboardingProfile(
-        name: String,
-        sensitivityRange: ClosedFloatingPointRange<Float>,
-        preferenceRating: Int
-    ): String {
+    /**
+     * The sensory thresholds onboarding collects live in [FilterStore] with the
+     * ones the map's filter sheet edits, so only the name is written here - in the
+     * same commit as the completion flag, so a name can never be left behind by an
+     * onboarding that counts as done.
+     */
+    fun saveOnboardingProfile(name: String): String {
         val cleaned = name.trim().take(MAX_NAME_CHARS).ifBlank { DEFAULT_NAME }
-        val start = sensitivityRange.start.coerceIn(0f, 1f)
-        val end = sensitivityRange.endInclusive.coerceIn(start, 1f)
         prefs.edit()
             .putString(KEY_NAME, cleaned)
-            .putFloat(KEY_SENSITIVITY_START, start)
-            .putFloat(KEY_SENSITIVITY_END, end)
-            .putInt(KEY_PREFERENCE_RATING, preferenceRating.coerceIn(1, 5))
             .putBoolean(KEY_ONBOARDING_COMPLETE, true)
             .apply()
         return cleaned
@@ -86,13 +72,7 @@ class ProfileStore(context: Context) {
         const val KEY_NAME = "display_name"
         const val KEY_PLACE = "saved_place"
         const val KEY_ONBOARDING_COMPLETE = "onboarding_complete"
-        const val KEY_SENSITIVITY_START = "sensitivity_start"
-        const val KEY_SENSITIVITY_END = "sensitivity_end"
-        const val KEY_PREFERENCE_RATING = "preference_rating"
         const val DEFAULT_NAME = "Matr Kohler"
         const val MAX_NAME_CHARS = 40
-        const val DEFAULT_SENSITIVITY_START = 0.05f
-        const val DEFAULT_SENSITIVITY_END = 0.35f
-        const val DEFAULT_PREFERENCE_RATING = 4
     }
 }
