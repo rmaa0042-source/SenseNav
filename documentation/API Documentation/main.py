@@ -6,7 +6,7 @@ import polyline
 import math
 import psycopg2
 
-GOOGLE_API_KEY = "AIzaSyD9B1hTRqMAfp3koN1dIZRvs0SIT0D3Rp4"
+GOOGLE_API_KEY = "GOOGLE_API_KEY_GOES_HERE"
 DIRECTIONS_URL = "https://maps.googleapis.com/maps/api/directions/json"
 NEARBY_RADIUS_METERS = 100
 
