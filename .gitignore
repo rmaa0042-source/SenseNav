@@ -10,6 +10,18 @@
 .DS_Store
 /build
 /captures
+
+# Release signing. keystore.properties.example is the committed template; the
+# real file and any keystore must never be committed - a signing key in the
+# repository is a signing key anyone with clone access can publish with.
+/keystore.properties
+keystore.properties
+*.jks
+*.keystore
+
+# Firebase project config. Pulled from the Firebase console per environment
+# rather than committed, since it names the project a build talks to.
+google-services.json
 .externalNativeBuild
 .cxx
 local.properties

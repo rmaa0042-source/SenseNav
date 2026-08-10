@@ -1,12 +1,26 @@
-<?xml version="1.0" encoding="utf-8"?>
+<?xml version="1.0" encoding="utf-8"?><!--
+    TLS everywhere except the scoring API, which is served over plain HTTP at a
+    fixed address and is exempted by host below. Cleartext stays denied for every
+    other destination, so a future endpoint cannot quietly be added over HTTP.
+
+    User-installed CAs are deliberately not trusted. This app carries the user's
+    location and where they have been, and honouring a certificate the user was
+    talked into installing is the standard way that traffic gets read.
+
+    The host here has to match ROUTING_API_BASE_URL in the build. Nothing at
+    runtime notices a mismatch - the calls just fail - so verifyReleaseConfig
+    compares the two before a release is allowed out.
+-->
 <network-security-config>
+
+    <base-config cleartextTrafficPermitted="false">
+        <trust-anchors>
+            <certificates src="system" />
+        </trust-anchors>
+    </base-config>
 
     <domain-config cleartextTrafficPermitted="true">
         <domain includeSubdomains="false">34.172.95.142</domain>
-    </domain-config>
-
-    <domain-config cleartextTrafficPermitted="true">
-        <domain includeSubdomains="false">10.0.2.2</domain>
     </domain-config>
 
 </network-security-config>

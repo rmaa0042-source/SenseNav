@@ -1,19 +1,28 @@
 <?xml version="1.0" encoding="utf-8"?><!--
-   Sample data extraction rules file; uncomment and customize as necessary.
-   See https://developer.android.com/about/versions/12/backup-restore#xml-changes
-   for details.
+    Android 12+ backup and transfer policy.
+
+    Every SharedPreferences file this app writes is excluded from both cloud
+    backup and device-to-device transfer. Between them they hold a chosen name, a
+    pinned home suburb, everywhere the user has searched for, and every route
+    they saved - which together describe a person's movements. The rest of the
+    code takes care to keep that on the device; a cloud backup would undo it in
+    one step.
+
+    Nothing here needs a backend to work, so losing this data on a new device
+    costs the user a short re-setup and nothing else.
 -->
 <data-extraction-rules>
+
     <cloud-backup>
-        <!-- TODO: Use <include> and <exclude> to control what is backed up.
-        <include .../>
-        <exclude .../>
-        -->
+        <exclude domain="sharedpref" path="." />
+        <exclude domain="database" path="." />
+        <exclude domain="file" path="." />
     </cloud-backup>
-    <!--
+
     <device-transfer>
-        <include .../>
-        <exclude .../>
+        <exclude domain="sharedpref" path="." />
+        <exclude domain="database" path="." />
+        <exclude domain="file" path="." />
     </device-transfer>
-    -->
+
 </data-extraction-rules>

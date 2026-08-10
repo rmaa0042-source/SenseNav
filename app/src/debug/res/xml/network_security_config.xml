@@ -1,0 +1,18 @@
+<?xml version="1.0" encoding="utf-8"?><!--
+    Debug only. Overrides the production config in src/main by having the same
+    resource name, and never reaches a release build.
+
+    Cleartext is permitted everywhere rather than for a listed host, because the
+    scoring VM has no static IP - pinning the address here would mean editing
+    this file every time the VM comes back on a new one. Safe to be this broad
+    precisely because it cannot ship.
+-->
+<network-security-config>
+
+    <base-config cleartextTrafficPermitted="true">
+        <trust-anchors>
+            <certificates src="system" />
+        </trust-anchors>
+    </base-config>
+
+</network-security-config>
